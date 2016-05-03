@@ -76,8 +76,16 @@ options:
         This option is only used with the command 'hotfix', action 'start'.
     required: false
     default: (empty string)
+  message:
+    description:
+      - Commit message to use when finishing a release.
+        This option is only used with the command 'release', action 'finish'.
+    required: false
+    default: " "
 
-author: José Dinuncio
+author: 
+    - José Dinuncio - @jdinuncio
+    - Extended by Sandro Cirulli - @cirulls
 '''
 
 EXAMPLES = '''
@@ -95,6 +103,9 @@ EXAMPLES = '''
 
 # Finish a release branch named '1.5'
 - gitflow: path={{ path }} command=release action=finish name=1.5
+
+# Finish a release branch named '1.5' with a commit message
+- gitflow: path={{ path }} command=release action=finish name=1.5 message="dummy message"
 
 # Get git-flow version
 - gitflow: command=version
@@ -133,9 +144,9 @@ def _gitflow_init(module, git, path):
         module.exit_json(changed=True, msg=err, command=cmd)
 
 
-def _gitflow_branch(module, git, command, path, action, name, base, remote):
+def _gitflow_branch(module, git, command, path, action, name, base, remote, message):
     """git-flow branch commands (feature, release, hotfix)."""
-    cmd = _get_cmd(git, command, action, name, base, remote)
+    cmd = _get_cmd(git, command, action, name, base, remote, message)
     branches = _list(module, git, command, path)
     _exit_if_unchanged(module, cmd, branches, action, name)
 
@@ -165,7 +176,7 @@ def _list(module, git, command, path):
     return dict(list=lst, current=current)
 
 
-def _get_cmd(git, command, action, name, base, remote):
+def _get_cmd(git, command, action, name, base, remote, message):
     """Returns a string representing the command to execute."""
     # git flow {command} {action} {name}
     cmd = '{0} flow {1} {2} {3}'
@@ -175,8 +186,11 @@ def _get_cmd(git, command, action, name, base, remote):
     elif action == 'pull':
         # git flow feature pull {remote} {name}
         cmd = '{0} flow {1} {4} {2}'
+    elif (command, action) == ('release', 'finish'):
+        # git flow release finish -m"{message}" {name}
+        cmd = '{0} flow {1} {2} -m{6!r} {3}'
 
-    cmd = cmd.format(git, command, action, name, base, remote)
+    cmd = cmd.format(git, command, action, name, base, remote, message)
     return cmd
 
 
@@ -202,6 +216,7 @@ def main():
             executable=dict(required=False, default=GIT_EXECUTABLE),
             remote=dict(required=False, default=''),
             base=dict(required=False, default=''),
+            message=dict(required=False, default=' '),
         )
     )
 
@@ -212,6 +227,7 @@ def main():
     name = module.params['name']
     remote = module.params['remote']
     base = module.params['base']
+    message = module.params['message']
 
     if command == 'version':
         _gitflow_version(module, git)
@@ -223,7 +239,7 @@ def main():
     # not declared in module's command choices.
     elif command in ['feature', 'release', 'hotfix', 'support']:
         _gitflow_branch(module, git, command, path, action, name,
-                        base, remote)
+                        base, remote, message)
 
 
 # import module snippets
