@@ -31,7 +31,7 @@ description:
        github repository (https://github.com/nvie/gitflow). You can also read
        "Getting Starting -- Gitflow"
        (http://yakiloo.com/getting-started-git-flow/).
-version_added: "1.9"
+version_added: "2.2"
 options:
   path:
     description:
