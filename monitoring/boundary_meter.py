@@ -22,10 +22,9 @@ You should have received a copy of the GNU General Public License
 along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import json
-import datetime
-import base64
-import os
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 
@@ -34,11 +33,10 @@ short_description: Manage boundary meters
 description:
     - This module manages boundary meters
 version_added: "1.3"
-author: curtis@serverascode.com
+author: "curtis (@ccollicutt)"
 requirements:
     - Boundary API access
     - bprobe is required to send data, but not to register a meter
-    - Python urllib2
 options:
     name:
         description:
@@ -81,15 +79,33 @@ EXAMPLES='''
 
 '''
 
+import base64
+import os
+
+try:
+    import json
+except ImportError:
+    try:
+        import simplejson as json
+    except ImportError:
+        # Let snippet from module_utils/basic.py return a proper error in this case
+        pass
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.urls import fetch_url
+
+
 api_host = "api.boundary.com"
 config_directory = "/etc/bprobe"
+
 
 # "resource" like thing or apikey?
 def auth_encode(apikey):
     auth = base64.standard_b64encode(apikey)
     auth.replace("\n", "")
     return auth
-    
+
+
 def build_url(name, apiid, action, meter_id=None, cert_type=None):
     if action == "create":
         return 'https://%s/%s/meters' % (api_host, apiid)
@@ -191,7 +207,7 @@ def delete_meter(module, name, apiid, apikey):
             try:
                 cert_file = '%s/%s.pem' % (config_directory,cert_type)
                 os.remove(cert_file)
-            except OSError, e:  
+            except OSError:
                 module.fail_json("Failed to remove " + cert_type + ".pem file")
 
     return 0, "Meter " + name + " deleted"
@@ -212,9 +228,9 @@ def download_request(module, name, apiid, apikey, cert_type):
                 body = response.read()
                 cert_file = open(cert_file_path, 'w')
                 cert_file.write(body)
-                cert_file.close
-                os.chmod(cert_file_path, 0o600)
-            except: 
+                cert_file.close()
+                os.chmod(cert_file_path, int('0600', 8))
+            except:
                 module.fail_json("Could not write to certificate file")
 
         return True
@@ -249,8 +265,7 @@ def main():
 
     module.exit_json(status=result,changed=True)
 
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-main()
+
+if __name__ == '__main__':
+    main()
 

@@ -19,6 +19,10 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: ohai
@@ -32,7 +36,9 @@ version_added: "0.6"
 options: {}
 notes: []
 requirements: [ "ohai" ]
-author: Michael DeHaan
+author: 
+    - "Ansible Core Team"
+    - "Michael DeHaan (@mpdehaan)"
 '''
 
 EXAMPLES = '''
@@ -51,6 +57,5 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 
-main()
-
-
+if __name__ == '__main__':
+    main()

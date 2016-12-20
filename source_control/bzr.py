@@ -19,10 +19,14 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = u'''
 ---
 module: bzr
-author: André Paramés
+author: "André Paramés (@andreparames)"
 version_added: "1.1"
 short_description: Deploy software (or files) from bzr branches
 description:
@@ -62,7 +66,10 @@ options:
 
 EXAMPLES = '''
 # Example bzr checkout from Ansible Playbooks
-- bzr: name=bzr+ssh://foosball.example.org/path/to/branch dest=/srv/checkout version=22
+- bzr:
+    name: 'bzr+ssh://foosball.example.org/path/to/branch'
+    dest: /srv/checkout
+    version: 22
 '''
 
 import re
@@ -143,7 +150,7 @@ class Bzr(object):
 def main():
     module = AnsibleModule(
         argument_spec = dict(
-            dest=dict(required=True),
+            dest=dict(required=True, type='path'),
             name=dict(required=True, aliases=['parent']),
             version=dict(default='head'),
             force=dict(default='no', type='bool'),
@@ -151,7 +158,7 @@ def main():
         )
     )
 
-    dest    = os.path.abspath(os.path.expanduser(module.params['dest']))
+    dest    = module.params['dest']
     parent  = module.params['name']
     version = module.params['version']
     force   = module.params['force']
@@ -196,4 +203,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

@@ -15,6 +15,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: virt
@@ -55,13 +59,20 @@ options:
       - XML document used with the define command
     required: false
     default: null
-requirements: [ "libvirt" ]
-author: Michael DeHaan, Seth Vidal
+requirements:
+    - "python >= 2.6"
+    - "libvirt-python"
+author:
+    - "Ansible Core Team"
+    - "Michael DeHaan"
+    - "Seth Vidal"
 '''
 
 EXAMPLES = '''
 # a playbook task line:
-- virt: name=alpha state=running
+- virt:
+    name: alpha
+    state: running
 
 # /usr/bin/ansible invocations
 ansible host -m virt -a "name=alpha command=status"
@@ -71,14 +82,35 @@ ansible host -m virt -a "name=alpha command=create uri=lxc:///"
 # a playbook example of defining and launching an LXC guest
 tasks:
   - name: define vm
-    virt: name=foo
-          command=define
-          xml="{{ lookup('template', 'container-template.xml.j2') }}"
-          uri=lxc:///
+    virt:
+        name: foo
+        command: define
+        xml: '{{ lookup('template', 'container-template.xml.j2') }}'
+        uri: 'lxc:///'
   - name: start vm
-    virt: name=foo state=running uri=lxc:///
+    virt:
+        name: foo
+        state: running
+        uri: 'lxc:///'
 '''
 
+RETURN = '''
+# for list_vms command
+list_vms: 
+    description: The list of vms defined on the remote system
+    type: dictionary
+    returned: success
+    sample: [
+        "build.example.org", 
+        "dev.example.org"
+    ]
+# for status command
+status:
+    description: The status of the VM, among running, crashed, paused and shutdown
+    type: string
+    sample: "success"
+    returned: success
+'''
 VIRT_FAILED = 1
 VIRT_SUCCESS = 0
 VIRT_UNAVAILABLE=2
@@ -88,8 +120,9 @@ import sys
 try:
     import libvirt
 except ImportError:
-    print "failed=True msg='libvirt python module unavailable'"
-    sys.exit(1)
+    HAS_VIRT = False
+else:
+    HAS_VIRT = True
 
 ALL_COMMANDS = []
 VM_COMMANDS = ['create','status', 'start', 'stop', 'pause', 'unpause',
@@ -122,6 +155,9 @@ class LibvirtConnection(object):
 
         if "xen" in stdout:
             conn = libvirt.open(None)
+        elif "esx" in uri:
+            auth = [[libvirt.VIR_CRED_AUTHNAME, libvirt.VIR_CRED_NOECHOPROMPT], [], None]
+            conn = libvirt.openAuth(uri, auth)
         else:
             conn = libvirt.open(uri)
 
@@ -404,7 +440,7 @@ def core(module):
 
     if state and command=='list_vms':
         res = v.list_vms(state=state)
-        if type(res) != dict:
+        if not isinstance(res, dict):
             res = { command: res }
         return VIRT_SUCCESS, res
 
@@ -451,13 +487,13 @@ def core(module):
                     res = {'changed': True, 'created': guest}
                 return VIRT_SUCCESS, res
             res = getattr(v, command)(guest)
-            if type(res) != dict:
+            if not isinstance(res, dict):
                 res = { command: res }
             return VIRT_SUCCESS, res
 
         elif hasattr(v, command):
             res = getattr(v, command)()
-            if type(res) != dict:
+            if not isinstance(res, dict):
                 res = { command: res }
             return VIRT_SUCCESS, res
 
@@ -476,10 +512,16 @@ def main():
         xml = dict(),
     ))
 
+    if not HAS_VIRT:
+        module.fail_json(
+            msg='The `libvirt` module is not importable. Check the requirements.'
+        )
+
     rc = VIRT_SUCCESS
     try:
         rc, result = core(module)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg=str(e))
 
     if rc != 0: # something went wrong emit the msg
@@ -490,4 +532,7 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.pycompat24 import get_exception
+
+if __name__ == '__main__':
+    main()

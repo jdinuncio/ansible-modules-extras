@@ -21,6 +21,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: ufw
@@ -28,7 +32,10 @@ short_description: Manage firewall with UFW
 description:
     - Manage firewall with UFW.
 version_added: 1.6
-author: Aleksey Ovcharenko, Jarno Keskikangas, Ahti Kitsik
+author:
+    - "Aleksey Ovcharenko (@ovcharenko)"
+    - "Jarno Keskikangas (@pyykkis)"
+    - "Ahti Kitsik (@ahtik)"
 notes:
     - See C(man ufw) for more examples.
 requirements:
@@ -113,55 +120,112 @@ options:
       - Specify interface for rule.
     required: false
     aliases: ['if']
+  route:
+    description:
+      - Apply the rule to routed/forwarded packets.
+    required: false
+    choices: ['yes', 'no']
 '''
 
 EXAMPLES = '''
 # Allow everything and enable UFW
-ufw: state=enabled policy=allow
+- ufw:
+    state: enabled
+    policy: allow
 
 # Set logging
-ufw: logging=on
+- ufw:
+    logging: on
 
 # Sometimes it is desirable to let the sender know when traffic is
 # being denied, rather than simply ignoring it. In these cases, use
 # reject instead of deny. In addition, log rejected connections:
-ufw: rule=reject port=auth log=yes
+- ufw:
+    rule: reject
+    port: auth
+    log: yes
 
 # ufw supports connection rate limiting, which is useful for protecting
 # against brute-force login attacks. ufw will deny connections if an IP
 # address has attempted to initiate 6 or more connections in the last
 # 30 seconds. See  http://www.debian-administration.org/articles/187
 # for details. Typical usage is:
-ufw: rule=limit port=ssh proto=tcp
+- ufw:
+    rule: limit
+    port: ssh
+    proto: tcp
 
-# Allow OpenSSH
-ufw: rule=allow name=OpenSSH
+# Allow OpenSSH. (Note that as ufw manages its own state, simply removing
+# a rule=allow task can leave those ports exposed. Either use delete=yes
+# or a separate state=reset task)
+- ufw:
+    rule: allow
+    name: OpenSSH
 
 # Delete OpenSSH rule
-ufw: rule=allow name=OpenSSH delete=yes
+- ufw:
+    rule: allow
+    name: OpenSSH
+    delete: yes
 
 # Deny all access to port 53:
-ufw: rule=deny port=53
+- ufw:
+    rule: deny
+    port: 53
+
+# Allow port range 60000-61000
+- ufw:
+    rule: allow
+    port: '60000:61000'
 
 # Allow all access to tcp port 80:
-ufw: rule=allow port=80 proto=tcp
+- ufw:
+    rule: allow
+    port: 80
+    proto: tcp
 
 # Allow all access from RFC1918 networks to this host:
-ufw: rule=allow src={{ item }}
-with_items:
-- 10.0.0.0/8
-- 172.16.0.0/12
-- 192.168.0.0/16
+- ufw:
+    rule: allow
+    src: '{{ item }}'
+  with_items:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
 
 # Deny access to udp port 514 from host 1.2.3.4:
-ufw: rule=deny proto=udp src=1.2.3.4 port=514
+- ufw:
+    rule: deny
+    proto: udp
+    src: 1.2.3.4
+    port: 514
 
 # Allow incoming access to eth0 from 1.2.3.5 port 5469 to 1.2.3.4 port 5469
-ufw: rule=allow interface=eth0 direction=in proto=udp src=1.2.3.5 from_port=5469 dest=1.2.3.4 to_port=5469
+- ufw:
+    rule: allow
+    interface: eth0
+    direction: in
+    proto: udp
+    src: 1.2.3.5
+    from_port: 5469
+    dest: 1.2.3.4
+    to_port: 5469
 
 # Deny all traffic from the IPv6 2001:db8::/32 to tcp port 25 on this host.
 # Note that IPv6 must be enabled in /etc/default/ufw for IPv6 firewalling to work.
-ufw: rule=deny proto=tcp src=2001:db8::/32 port=25
+- ufw:
+    rule: deny
+    proto: tcp
+    src: '2001:db8::/32'
+    port: 25
+
+# Deny forwarded/routed traffic from subnet 1.2.3.0/24 to subnet 4.5.6.0/24.
+# Can be used to further restrict a global FORWARD policy set to allow
+- ufw:
+    rule: deny
+    route: yes
+    src: 1.2.3.0/24
+    dest: 4.5.6.0/24
 '''
 
 from operator import itemgetter
@@ -175,6 +239,7 @@ def main():
             logging   = dict(default=None,  choices=['on', 'off', 'low', 'medium', 'high', 'full']),
             direction = dict(default=None,  choices=['in', 'incoming', 'out', 'outgoing', 'routed']),
             delete    = dict(default=False, type='bool'),
+            route     = dict(default=False, type='bool'),
             insert    = dict(default=None),
             rule      = dict(default=None,  choices=['allow', 'deny', 'reject', 'limit']),
             interface = dict(default=None,  aliases=['if']),
@@ -210,7 +275,7 @@ def main():
     if len(commands) < 1:
         module.fail_json(msg="Not any of the command arguments %s given" % commands)
 
-    if('interface' in params and 'direction' not in params):
+    if(params['interface'] is not None and params['direction'] is None):
       module.fail_json(msg="Direction must be specified when creating a rule on an interface")
 
     # Ensure ufw is available
@@ -238,16 +303,18 @@ def main():
         elif command == 'rule':
             # Rules are constructed according to the long format
             #
-            # ufw [--dry-run] [delete] [insert NUM] allow|deny|reject|limit [in|out on INTERFACE] [log|log-all] \
+            # ufw [--dry-run] [delete] [insert NUM] [route] allow|deny|reject|limit [in|out on INTERFACE] [log|log-all] \
             #     [from ADDRESS [port PORT]] [to ADDRESS [port PORT]] \
             #     [proto protocol] [app application]
             cmd.append([module.boolean(params['delete']), 'delete'])
+            cmd.append([module.boolean(params['route']), 'route'])
             cmd.append([params['insert'], "insert %s" % params['insert']])
             cmd.append([value])
+            cmd.append([params['direction'], "%s" % params['direction']])
+            cmd.append([params['interface'], "on %s" % params['interface']])
             cmd.append([module.boolean(params['log']), 'log'])
 
-            for (key, template) in [('direction', "%s"      ), ('interface', "on %s"   ),
-                                    ('from_ip',   "from %s" ), ('from_port', "port %s" ),
+            for (key, template) in [('from_ip',   "from %s" ), ('from_port', "port %s" ),
                                     ('to_ip',     "to %s"   ), ('to_port',   "port %s" ),
                                     ('proto',     "proto %s"), ('app',       "app '%s'")]:
 
@@ -266,4 +333,5 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 
-main()
+if __name__ == '__main__':
+    main()

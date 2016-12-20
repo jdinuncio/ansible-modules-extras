@@ -1,8 +1,10 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
+# (c) 2016, William L Thomson Jr
 # (c) 2013, Yap Sok Ann
 # Written by Yap Sok Ann <sokann@gmail.com>
+# Modified by William L. Thomson Jr. <wlt@o-sinc.com>
 # Based on apt module written by Matthew Williams <matthew@flowroute.com>
 #
 # This module is free software: you can redistribute it and/or modify
@@ -18,6 +20,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 
+
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -76,29 +82,29 @@ options:
     description:
       - Do not add the packages to the world file (--oneshot)
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   noreplace:
     description:
       - Do not re-emerge installed packages (--noreplace)
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   nodeps:
     description:
       - Only merge packages but not their dependencies (--nodeps)
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   onlydeps:
     description:
       - Only merge packages' dependencies but not the packages (--onlydeps)
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   depclean:
     description:
@@ -106,22 +112,22 @@ options:
       - If no package is specified, clean up the world's dependencies
       - Otherwise, --depclean serves as a dependency aware version of --unmerge
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   quiet:
     description:
       - Run emerge in quiet mode (--quiet)
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   verbose:
     description:
       - Run emerge in verbose mode (--verbose)
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   sync:
     description:
@@ -130,51 +136,97 @@ options:
       - If web, perform "emerge-webrsync"
     required: false
     default: null
-    choices: [ "yes", "web" ]
+    choices: [ "yes", "web", "no" ]
 
   getbinpkg:
     description:
       - Prefer packages specified at PORTAGE_BINHOST in make.conf
     required: false
-    default: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
 
   usepkgonly:
     description:
       - Merge only binaries (no compiling). This sets getbinpkg=yes.
     required: false
-    deafult: null
-    choices: [ "yes" ]
+    default: False
+    choices: [ "yes", "no" ]
+
+  keepgoing:
+    description:
+      - Continue as much as possible after an error.
+    required: false
+    default: False
+    choices: [ "yes", "no" ]
+    version_added: 2.3
+
+  jobs:
+    description:
+      - Specifies the number of packages to build simultaneously.
+    required: false
+    default: None
+    type: int
+    version_added: 2.3
+
+  loadavg:
+    description:
+      - Specifies that no new builds should be started if there are
+      - other builds running and the load average is at least LOAD
+    required: false
+    default: None
+    type: float
+    version_added: 2.3
 
 requirements: [ gentoolkit ]
-author: Yap Sok Ann, Andrew Udvare
+author:
+    - "William L Thomson Jr (@wltjr)"
+    - "Yap Sok Ann (@sayap)"
+    - "Andrew Udvare"
 notes:  []
 '''
 
 EXAMPLES = '''
 # Make sure package foo is installed
-- portage: package=foo state=present
+- portage:
+    package: foo
+    state: present
 
 # Make sure package foo is not installed
-- portage: package=foo state=absent
+- portage:
+    package: foo
+    state: absent
 
 # Update package foo to the "best" version
-- portage: package=foo update=yes
+- portage:
+    package: foo
+    update: yes
 
 # Install package foo using PORTAGE_BINHOST setup
-- portage: package=foo getbinpkg=yes
+- portage:
+    package: foo
+    getbinpkg: yes
 
 # Re-install world from binary packages only and do not allow any compiling
-- portage: package=@world usepkgonly=yes
+- portage:
+    package: @world
+    usepkgonly: yes
 
 # Sync repositories and update world
-- portage: package=@world update=yes deep=yes sync=yes
+- portage:
+    package: @world
+    update: yes
+    deep: yes
+    sync: yes
 
 # Remove unneeded packages
-- portage: depclean=yes
+- portage:
+    depclean: yes
 
 # Remove package foo if it is not explicitly needed
-- portage: package=foo state=absent depclean=yes
+- portage:
+    package: foo
+    state: absent
+    depclean: yes
 '''
 
 
@@ -231,7 +283,7 @@ def sync_repositories(module, webrsync=False):
         webrsync_path = module.get_bin_path('emerge-webrsync', required=True)
         cmd = '%s --quiet' % webrsync_path
     else:
-        cmd = '%s --sync --quiet' % module.emerge_path
+        cmd = '%s --sync --quiet --ask=n' % module.emerge_path
 
     rc, out, err = module.run_command(cmd)
     if rc != 0:
@@ -252,6 +304,8 @@ def emerge_packages(module, packages):
                 break
         else:
             module.exit_json(changed=False, msg='Packages already present.')
+        if module.check_mode:
+            module.exit_json(changed=True, msg='Packages would be installed.')
 
     args = []
     emerge_flags = {
@@ -267,14 +321,24 @@ def emerge_packages(module, packages):
         'verbose': '--verbose',
         'getbinpkg': '--getbinpkg',
         'usepkgonly': '--usepkgonly',
+        'usepkg': '--usepkg',
+        'keepgoing': '--keep-going',
     }
-    for flag, arg in emerge_flags.iteritems():
+    for flag, arg in emerge_flags.items():
         if p[flag]:
             args.append(arg)
 
-    # usepkgonly implies getbinpkg
-    if p['usepkgonly'] and not p['getbinpkg']:
-        args.append('--getbinpkg')
+    if p['usepkg'] and p['usepkgonly']:
+        module.fail_json(msg='Use only one of usepkg, usepkgonly')
+
+    emerge_flags = {
+        'jobs': '--jobs=',
+        'loadavg': '--load-average ',
+    }
+
+    for flag, arg in emerge_flags.items():
+        if p[flag] is not None:
+            args.append(arg + str(p[flag]))
 
     cmd, (rc, out, err) = run_emerge(module, packages, *args)
     if rc != 0:
@@ -296,13 +360,18 @@ def emerge_packages(module, packages):
     changed = True
     for line in out.splitlines():
         if re.match(r'(?:>+) Emerging (?:binary )?\(1 of', line):
+            msg = 'Packages installed.'
+            break
+        elif module.check_mode and re.match(r'\[(binary|ebuild)', line):
+            msg = 'Packages would be installed.'
             break
     else:
         changed = False
+        msg = 'No packages installed.'
 
     module.exit_json(
         changed=changed, cmd=cmd, rc=rc, stdout=out, stderr=err,
-        msg='Packages installed.',
+        msg=msg,
     )
 
 
@@ -387,25 +456,29 @@ portage_absent_states = ['absent', 'unmerged', 'removed']
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            package=dict(default=None, aliases=['name']),
+            package=dict(default=None, aliases=['name'], type='list'),
             state=dict(
                 default=portage_present_states[0],
                 choices=portage_present_states + portage_absent_states,
             ),
-            update=dict(default=None, choices=['yes']),
-            deep=dict(default=None, choices=['yes']),
-            newuse=dict(default=None, choices=['yes']),
-            changed_use=dict(default=None, choices=['yes']),
-            oneshot=dict(default=None, choices=['yes']),
-            noreplace=dict(default=None, choices=['yes']),
-            nodeps=dict(default=None, choices=['yes']),
-            onlydeps=dict(default=None, choices=['yes']),
-            depclean=dict(default=None, choices=['yes']),
-            quiet=dict(default=None, choices=['yes']),
-            verbose=dict(default=None, choices=['yes']),
+            update=dict(default=False, type='bool'),
+            deep=dict(default=False, type='bool'),
+            newuse=dict(default=False, type='bool'),
+            changed_use=dict(default=False, type='bool'),
+            oneshot=dict(default=False, type='bool'),
+            noreplace=dict(default=False, type='bool'),
+            nodeps=dict(default=False, type='bool'),
+            onlydeps=dict(default=False, type='bool'),
+            depclean=dict(default=False, type='bool'),
+            quiet=dict(default=False, type='bool'),
+            verbose=dict(default=False, type='bool'),
             sync=dict(default=None, choices=['yes', 'web']),
-            getbinpkg=dict(default=None, choices=['yes']),
-            usepkgonly=dict(default=None, choices=['yes']),
+            getbinpkg=dict(default=False, type='bool'),
+            usepkgonly=dict(default=False, type='bool'),
+            usepkg=dict(default=False, type='bool'),
+            keepgoing=dict(default=False, type='bool'),
+            jobs=dict(default=None, type='int'),
+            loadavg=dict(default=None, type='float'),
         ),
         required_one_of=[['package', 'sync', 'depclean']],
         mutually_exclusive=[['nodeps', 'onlydeps'], ['quiet', 'verbose']],
@@ -422,7 +495,9 @@ def main():
         if not p['package']:
             module.exit_json(msg='Sync successfully finished.')
 
-    packages = p['package'].split(',') if p['package'] else []
+    packages = []
+    if p['package']:
+        packages.extend(p['package'])
 
     if p['depclean']:
         if packages and p['state'] not in portage_absent_states:
@@ -442,4 +517,5 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 
-main()
+if __name__ == '__main__':
+    main()

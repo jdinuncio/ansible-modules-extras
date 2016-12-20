@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: dnsimple
@@ -32,7 +36,7 @@ options:
     description:
       - Account API token. See I(account_email) for info.
     required: false
-    default: null      
+    default: null
 
   domain:
     description:
@@ -67,7 +71,7 @@ options:
     default: 3600 (one hour)
 
   value:
-    description: 
+    description:
       - Record value
       - "Must be specified when trying to ensure a record exists"
     required: false
@@ -93,49 +97,80 @@ options:
     default: null
 
 requirements: [ dnsimple ]
-author: Alex Coomans
+author: "Alex Coomans (@drcapulet)"
 '''
 
 EXAMPLES = '''
-# authenticate using email and API token
-- local_action: dnsimple account_email=test@example.com account_api_token=dummyapitoken
-
-# fetch all domains
-- local_action dnsimple
-  register: domains
+# authenticate using email and API token and fetch all domains
+- dnsimple:
+    account_email: test@example.com
+    account_api_token: dummyapitoken
+  delegate_to: localhost
 
 # fetch my.com domain records
-- local_action: dnsimple domain=my.com state=present
+- dnsimple:
+    domain: my.com
+    state: present
+  delegate_to: localhost
   register: records
 
 # delete a domain
-- local_action: dnsimple domain=my.com state=absent
+- dnsimple:
+    domain: my.com
+    state: absent
+  delegate_to: localhost
 
 # create a test.my.com A record to point to 127.0.0.01
-- local_action: dnsimple domain=my.com record=test type=A value=127.0.0.1
+- dnsimple:
+    domain: my.com
+    record: test
+    type: A
+    value: 127.0.0.1
+  delegate_to: localhost
   register: record
 
 # and then delete it
-- local_action: dnsimple domain=my.com record_ids={{ record['id'] }}
+- dnsimple:
+    domain: my.com
+    record_ids: '{{ record["id"] }}'
+  delegate_to: localhost
 
 # create a my.com CNAME record to example.com
-- local_action: dnsimple domain=my.com record= type=CNAME value=example.com state=present
+- dnsimple
+    domain: my.com
+    record: ''
+    type: CNAME
+    value: example.com
+    state: present
+  delegate_to: localhost
 
 # change it's ttl
-- local_action: dnsimple domain=my.com record= type=CNAME value=example.com ttl=600 state=present
+- dnsimple:
+    domain: my.com
+    record: ''
+    type: CNAME
+    value: example.com
+    ttl: 600
+    state: present
+  delegate_to: localhost
 
 # and delete the record
-- local_action: dnsimpledomain=my.com record= type=CNAME value=example.com state=absent
-
+- dnsimple:
+    domain: my.com
+    record: ''
+    type: CNAME
+    value: example.com
+    state: absent
+  delegate_to: localhost
 '''
 
 import os
 try:
     from dnsimple import DNSimple
     from dnsimple.dnsimple import DNSimpleException
+    HAS_DNSIMPLE = True
 except ImportError:
-    print "failed=True msg='dnsimple required for this module'"
-    sys.exit(1)
+    HAS_DNSIMPLE = False
 
 def main():
     module = AnsibleModule(
@@ -148,7 +183,7 @@ def main():
             type              = dict(required=False, choices=['A', 'ALIAS', 'CNAME', 'MX', 'SPF', 'URL', 'TXT', 'NS', 'SRV', 'NAPTR', 'PTR', 'AAAA', 'SSHFP', 'HINFO', 'POOL']),
             ttl               = dict(required=False, default=3600, type='int'),
             value             = dict(required=False),
-            priority          = dict(required=False, type='int'), 
+            priority          = dict(required=False, type='int'),
             state             = dict(required=False, choices=['present', 'absent']),
             solo              = dict(required=False, type='bool'),
         ),
@@ -157,6 +192,9 @@ def main():
         ),
         supports_check_mode = True,
     )
+
+    if not HAS_DNSIMPLE:
+        module.fail_json(msg="dnsimple required for this module")
 
     account_email     = module.params.get('account_email')
     account_api_token = module.params.get('account_api_token')
@@ -291,12 +329,15 @@ def main():
             else:
                 module.fail_json(msg="'%s' is an unknown value for the state argument" % state)
 
-    except DNSimpleException, e:
+    except DNSimpleException:
+        e = get_exception()
         module.fail_json(msg="Unable to contact DNSimple: %s" % e.message)
 
     module.fail_json(msg="Unknown what you wanted me to do")
 
 # import module snippets
 from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
 
-main()
+if __name__ == '__main__':
+    main()

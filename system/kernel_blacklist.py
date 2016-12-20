@@ -22,10 +22,14 @@ import os
 import re
 
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: kernel_blacklist
-author: Matthias Vogelgesang
+author: "Matthias Vogelgesang (@matze)"
 version_added: 1.4
 short_description: Blacklist kernel modules
 description:
@@ -52,7 +56,9 @@ requirements: []
 
 EXAMPLES = '''
 # Blacklist the nouveau driver module
-- kernel_blacklist: name=nouveau state=present
+- kernel_blacklist:
+    name: nouveau
+    state: present
 '''
 
 
@@ -138,4 +144,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

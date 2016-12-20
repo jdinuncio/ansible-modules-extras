@@ -20,7 +20,9 @@
 #
 
 
-import base64
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -29,10 +31,8 @@ short_description: create an annotation in librato
 description:
     - Create an annotation event on the given annotation stream :name. If the annotation stream does not exist, it will be created automatically
 version_added: "1.6"
-author: Seth Edwards
-requirements:
-    - urllib2
-    - base64
+author: "Seth Edwards (@sedward)"
+requirements: []
 options:
     user:
         description:
@@ -81,37 +81,31 @@ EXAMPLES = '''
 - librato_annotation:
     user: user@example.com
     api_key: XXXXXXXXXXXXXXXXX
-    title: 'App Config Change'
-    source: 'foo.bar'
-    description: 'This is a detailed description of the config change'
+    title: App Config Change
+    source: foo.bar
+    description: This is a detailed description of the config change
 
 # Create an annotation that includes a link
 - librato_annotation:
     user: user@example.com
     api_key: XXXXXXXXXXXXXXXXXX
-    name: 'code.deploy'
-    title: 'app code deploy'
-    description: 'this is a detailed description of a deployment'
+    name: code.deploy
+    title: app code deploy
+    description: this is a detailed description of a deployment
     links:
-      - { rel: 'example', href: 'http://www.example.com/deploy' }
+      - rel: example
+        href: http://www.example.com/deploy
 
 # Create an annotation with a start_time and end_time
 - librato_annotation:
     user: user@example.com
     api_key: XXXXXXXXXXXXXXXXXX
-    name: 'maintenance'
-    title: 'Maintenance window'
-    description: 'This is a detailed description of maintenance'
+    name: maintenance
+    title: Maintenance window
+    description: This is a detailed description of maintenance
     start_time: 1395940006
     end_time: 1395954406
 '''
-
-
-try:
-    import urllib2
-    HAS_URLLIB2 = True
-except ImportError:
-    HAS_URLLIB2 = False
 
 def post_annotation(module):
     user = module.params['user']
@@ -138,11 +132,12 @@ def post_annotation(module):
 
     headers = {}
     headers['Content-Type'] = 'application/json'
-    headers['Authorization'] = b"Basic " + base64.b64encode(user + b":" + api_key).strip()
-    req = urllib2.Request(url, json_body, headers)
-    try:
-        response = urllib2.urlopen(req)
-    except urllib2.HTTPError as e:
+
+    # Hack send parameters the way fetch_url wants them
+    module.params['url_username'] = user
+    module.params['url_password'] = api_key
+    response, info = fetch_url(module, url, data=json_body, headers=headers)
+    if info['status'] != 200:
         module.fail_json(msg="Request Failed", reason=e.reason)
     response = response.read()
     module.exit_json(changed=True, annotation=response)
@@ -166,4 +161,6 @@ def main():
   post_annotation(module)
 
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.urls import *
+if __name__ == '__main__':
+    main()

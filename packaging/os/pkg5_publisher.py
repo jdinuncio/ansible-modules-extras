@@ -16,10 +16,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: pkg5_publisher
-author: Peter Oliver
+author: "Peter Oliver (@mavit)"
 short_description: Manages Solaris 11 Image Packaging System publishers
 version_added: 1.9
 description:
@@ -66,10 +70,15 @@ options:
 '''
 EXAMPLES = '''
 # Fetch packages for the solaris publisher direct from Oracle:
-- pkg5_publisher: name=solaris sticky=true origin=https://pkg.oracle.com/solaris/support/
+- pkg5_publisher:
+    name: solaris
+    sticky: true
+    origin: https://pkg.oracle.com/solaris/support/
 
 # Configure a publisher for locally-produced packages:
-- pkg5_publisher: name=site origin=https://pkg.example.com/site/
+- pkg5_publisher:
+    name: site
+    origin: 'https://pkg.example.com/site/'
 '''
 
 def main():
@@ -77,8 +86,8 @@ def main():
         argument_spec=dict(
             name=dict(required=True, aliases=['publisher']),
             state=dict(default='present', choices=['present', 'absent']),
-            sticky=dict(choices=BOOLEANS),
-            enabled=dict(choices=BOOLEANS),
+            sticky=dict(type='bool'),
+            enabled=dict(type='bool'),
             # search_after=dict(),
             # search_before=dict(),
             origin=dict(type='list'),
@@ -122,10 +131,15 @@ def set_publisher(module, params):
         args.append('--remove-mirror=*')
         args.extend(['--add-mirror=' + u for u in params['mirror']])
 
-    if params['sticky'] != None:
-        args.append('--sticky' if params['sticky'] else '--non-sticky')
-    if params['enabled'] != None:
-        args.append('--enable' if params['enabled'] else '--disable')
+    if params['sticky'] != None and params['sticky']:
+        args.append('--sticky')
+    elif params['sticky'] != None:
+        args.append('--non-sticky')
+
+    if params['enabled'] != None and params['enabled']:
+        args.append('--enable')
+    elif params['enabled'] != None:
+        args.append('--disable')
 
     rc, out, err = module.run_command(
         ["pkg", "set-publisher"] + args + [name],
@@ -175,13 +189,14 @@ def get_publishers(module):
             publishers[name]['origin'] = []
             publishers[name]['mirror'] = []
 
-        publishers[name][values['type']].append(values['uri'])
+        if values['type'] is not None:
+            publishers[name][values['type']].append(values['uri'])
 
     return publishers
 
 
 def unstringify(val):
-    if val == "-":
+    if val == "-" or val == '':
         return None
     elif val == "true":
         return True
@@ -192,4 +207,6 @@ def unstringify(val):
 
 
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

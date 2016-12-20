@@ -16,13 +16,17 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: postgresql_ext
 short_description: Add or remove PostgreSQL extensions from a database.
 description:
    - Add or remove PostgreSQL extensions from a database.
-version_added: "0.1"
+version_added: "1.9"
 options:
   name:
     description:
@@ -65,12 +69,14 @@ notes:
    - This module uses I(psycopg2), a Python PostgreSQL database adapter. You must ensure that psycopg2 is installed on
      the host before using this module. If the remote host is the PostgreSQL server (which is the default case), then PostgreSQL must also be installed on the remote host. For Ubuntu-based systems, install the C(postgresql), C(libpq-dev), and C(python-psycopg2) packages on the remote host before using this module.
 requirements: [ psycopg2 ]
-author: Daniel Schep
+author: "Daniel Schep (@dschep)"
 '''
 
 EXAMPLES = '''
 # Adds postgis to the database "acme"
-- postgresql_ext: name=postgis db=acme
+- postgresql_ext:
+    name: postgis
+    db: acme
 '''
 
 try:
@@ -118,7 +124,7 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(
             login_user=dict(default="postgres"),
-            login_password=dict(default=""),
+            login_password=dict(default="", no_log=True),
             login_host=dict(default=""),
             port=dict(default="5432"),
             db=dict(required=True),
@@ -159,30 +165,34 @@ def main():
                                               .ISOLATION_LEVEL_AUTOCOMMIT)
         cursor = db_connection.cursor(
                 cursor_factory=psycopg2.extras.DictCursor)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg="unable to connect to database: %s" % e)
 
     try:
         if module.check_mode:
+            if state == "present":
+                changed = not ext_exists(cursor, ext)
+            elif state == "absent":
+                changed = ext_exists(cursor, ext)
+        else:
             if state == "absent":
-                changed = not db_exists(cursor, ext)
+                changed = ext_delete(cursor, ext)
+    
             elif state == "present":
-                changed = db_exists(cursor, ext)
-            module.exit_json(changed=changed,ext=ext)
-
-        if state == "absent":
-            changed = ext_delete(cursor, ext)
-
-        elif state == "present":
-            changed = ext_create(cursor, ext)
-    except NotSupportedError, e:
+                changed = ext_create(cursor, ext)
+    except NotSupportedError:
+        e = get_exception()
         module.fail_json(msg=str(e))
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg="Database query failed: %s" % e)
 
-    module.exit_json(changed=changed, db=db)
+    module.exit_json(changed=changed, db=db, ext=ext)
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.pycompat24 import get_exception
 
+if __name__ == '__main__':
+    main()

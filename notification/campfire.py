@@ -1,5 +1,23 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -9,7 +27,6 @@ short_description: Send a message to Campfire
 description:
    - Send a message to Campfire.
    - Messages with newlines will result in a "Paste" message being sent.
-version_added: "1.2"
 options:
   subscription:
     description:
@@ -42,34 +59,33 @@ options:
               "vuvuzela", "what", "whoomp", "yeah", "yodel"]
 
 # informational: requirements for nodes
-requirements: [ urllib2, cgi ]
-author: Adam Garside <adam.garside@gmail.com>
+requirements: [ ]
+author: "Adam Garside (@fabulops)"
 '''
 
 EXAMPLES = '''
-- campfire: subscription=foo token=12345 room=123 msg="Task completed."
+- campfire:
+    subscription: foo
+    token: 12345
+    room: 123
+    msg: Task completed.
 
-- campfire: subscription=foo token=12345 room=123 notify=loggins
-        msg="Task completed ... with feeling."
+- campfire:
+    subscription: foo
+    token: 12345
+    room: 123
+    notify: loggins
+    msg: Task completed ... with feeling.
 '''
 
+import cgi
 
 def main():
-
-    try:
-        import urllib2
-    except ImportError:
-        module.fail_json(msg="urllib2 is required")
-
-    try:
-        import cgi
-    except ImportError:
-        module.fail_json(msg="cgi is required")
 
     module = AnsibleModule(
         argument_spec=dict(
             subscription=dict(required=True),
-            token=dict(required=True),
+            token=dict(required=True, no_log=True),
             room=dict(required=True),
             msg=dict(required=True),
             notify=dict(required=False,
@@ -102,42 +118,33 @@ def main():
     MSTR = "<message><body>%s</body></message>"
     AGENT = "Ansible/1.2"
 
-    try:
+    # Hack to add basic auth username and password the way fetch_url expects
+    module.params['url_username'] = token
+    module.params['url_password'] = 'X'
 
-        # Setup basic auth using token as the username
-        pm = urllib2.HTTPPasswordMgrWithDefaultRealm()
-        pm.add_password(None, URI, token, 'X')
+    target_url = '%s/room/%s/speak.xml' % (URI, room)
+    headers = {'Content-Type': 'application/xml',
+            'User-agent': AGENT}
 
-        # Setup Handler and define the opener for the request
-        handler = urllib2.HTTPBasicAuthHandler(pm)
-        opener = urllib2.build_opener(handler)
-
-        target_url = '%s/room/%s/speak.xml' % (URI, room)
-
-        # Send some audible notification if requested
-        if notify:
-            req = urllib2.Request(target_url, NSTR % cgi.escape(notify))
-            req.add_header('Content-Type', 'application/xml')
-            req.add_header('User-agent', AGENT)
-            response = opener.open(req)
-
-        # Send the message
-        req = urllib2.Request(target_url, MSTR % cgi.escape(msg))
-        req.add_header('Content-Type', 'application/xml')
-        req.add_header('User-agent', AGENT)
-        response = opener.open(req)
-
-    except urllib2.HTTPError, e:
-        if not (200 <= e.code < 300):
+    # Send some audible notification if requested
+    if notify:
+        response, info = fetch_url(module, target_url, data=NSTR % cgi.escape(notify), headers=headers)
+        if info['status'] not in [200, 201]:
             module.fail_json(msg="unable to send msg: '%s', campfire api"
-                                 " returned error code: '%s'" %
-                                 (msg, e.code))
+                                " returned error code: '%s'" %
+                                 (notify, info['status']))
 
-    except Exception, e:
-        module.fail_json(msg="unable to send msg: %s" % msg)
+    # Send the message
+    response, info = fetch_url(module, target_url, data=MSTR %cgi.escape(msg), headers=headers)
+    if info['status'] not in [200, 201]:
+        module.fail_json(msg="unable to send msg: '%s', campfire api"
+                            " returned error code: '%s'" %
+                             (msg, info['status']))
 
     module.exit_json(changed=True, room=room, msg=msg, notify=notify)
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.urls import *
+if __name__ == '__main__':
+    main()

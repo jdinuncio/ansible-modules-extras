@@ -21,6 +21,10 @@
 # this is a windows documentation stub.  actual code lives in the .ps1
 # file of the same name
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'committer',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: win_chocolatey
@@ -33,60 +37,60 @@ options:
     description:
       - Name of the package to be installed
     required: true
-    default: null
-    aliases: []
   state:
     description:
       - State of the package on the system
-    required: false
     choices:
       - present
       - absent
     default: present
-    aliases: []
   force:
     description:
       - Forces install of the package (even if it already exists). Using Force will cause ansible to always report that a change was made
-    required: false
     choices:
       - yes
       - no
     default: no
-    aliases: []
+  upgrade:
+    description:
+      - If package is already installed it, try to upgrade to the latest version or to the specified version
+    choices:
+      - yes
+      - no
+    default: no
   version:
     description:
       - Specific version of the package to be installed
       - Ignored when state == 'absent'
-    required: false
-    default: null
-    aliases: []
-  showlog:
-    description:
-      - Outputs the chocolatey log inside a chocolatey_log property.
-    required: false
-    choices:
-      - yes
-      - no
-    default: no
-    aliases: []
   source:
     description:
-      - Which source to install from
-    require: false
-    choices:
-      - chocolatey
-      - ruby
-      - webpi
-      - windowsfeatures
-    default: chocolatey
-    aliases: []
-  logPath:
+      - Specify source rather than using default chocolatey repository
+  install_args:
     description:
-      - Where to log command output to
+      - Arguments to pass to the native installer
+    version_added: '2.1'
+  params:
+    description:
+      - Parameters to pass to the package
+    version_added: '2.1'
+  allow_empty_checksums:
+    description:
+      - Allow empty Checksums to be used 
     require: false
-    default: c:\\ansible-playbook.log
-    aliases: []
-author: Trond Hindenes, Peter Mounce
+    default: false
+    version_added: '2.2'
+  ignore_checksums:
+    description:
+      - Ignore Checksums 
+    require: false
+    default: false
+    version_added: '2.2'      
+  ignore_dependencies:
+    description:
+      - Ignore dependencies, only install/upgrade the package itself
+    default: false
+    version_added: '2.1'
+author: "Trond Hindenes (@trondhindenes), Peter Mounce (@petemounce), Pepe Barbe (@elventear), Adam Keech (@smadam813)"
 '''
 
 # TODO:
@@ -102,17 +106,15 @@ EXAMPLES = '''
   # Install notepadplusplus version 6.6
   win_chocolatey:
     name: notepadplusplus.install
-    version: 6.6
+    version: '6.6'
 
   # Uninstall git
   win_chocolatey:
     name: git
     state: absent
 
-  # Install Application Request Routing v3 from webpi
-  # Logically, this requires that you install IIS first (see win_feature)
-  # To find a list of packages available via webpi source, `choco list -source webpi`
+  # Install git from specified repository
   win_chocolatey:
-    name: ARRv3
-    source: webpi
+    name: git
+    source: https://someserver/api/v2/
 '''

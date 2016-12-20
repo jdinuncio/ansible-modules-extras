@@ -16,11 +16,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: ejabberd_user
 version_added: "1.5"
-author: Peter Sprygada
+author: "Peter Sprygada (@privateip)"
 short_description: Manages users for ejabberd servers
 requirements:
     - ejabberd with mod_admin_extra
@@ -59,15 +63,22 @@ notes:
 EXAMPLES = '''
 Example playbook entries using the ejabberd_user module to manage users state.
 
-    tasks:
+- name: create a user if it does not exists
+  ejabberd_user:
+    username: test
+    host: server
+    password: password
 
-    - name: create a user if it does not exists
-      action: ejabberd_user username=test host=server password=password
-
-    - name: delete a user if it exists
-      action: ejabberd_user username=test host=server state=absent
+- name: delete a user if it exists
+  ejabberd_user:
+    username: test
+    host: server
+    state: absent
 '''
+
 import syslog
+from ansible.module_utils.pycompat24 import get_exception
+from ansible.module_utils.basic import *
 
 class EjabberdUserException(Exception):
     """ Base exeption for EjabberdUser class object """
@@ -98,7 +109,8 @@ class EjabberdUser(object):
         try:
             options = [self.user, self.host, self.pwd]
             (rc, out, err) = self.run_command('check_password', options)
-        except EjabberdUserException, e:
+        except EjabberdUserException:
+            e = get_exception()
             (rc, out, err) = (1, None, "required attribute(s) missing")
         return rc
 
@@ -111,14 +123,15 @@ class EjabberdUser(object):
         try:
             options = [self.user, self.host]
             (rc, out, err) = self.run_command('check_account', options)
-        except EjabberdUserException, e:
+        except EjabberdUserException:
+            e = get_exception()
             (rc, out, err) = (1, None, "required attribute(s) missing")
-        return True if rc == 0 else False
+        return not bool(int(rc))
 
     def log(self, entry):
         """ This method will log information to the local syslog facility """
         if self.logging:
-            syslog.openlog('ansible-%s' % os.path.basename(__file__))
+            syslog.openlog('ansible-%s' % self.module._name)
             syslog.syslog(syslog.LOG_NOTICE, entry)
 
     def run_command(self, cmd, options):
@@ -139,7 +152,8 @@ class EjabberdUser(object):
         try:
             options = [self.user, self.host, self.pwd]
             (rc, out, err) = self.run_command('change_password', options)
-        except EjabberdUserException, e:
+        except EjabberdUserException:
+            e = get_exception()
             (rc, out, err) = (1, None, "required attribute(s) missing")
         return (rc, out, err)
 
@@ -150,7 +164,8 @@ class EjabberdUser(object):
         try:
             options = [self.user, self.host, self.pwd]
             (rc, out, err) = self.run_command('register', options)
-        except EjabberdUserException, e:
+        except EjabberdUserException:
+            e = get_exception()
             (rc, out, err) = (1, None, "required attribute(s) missing")
         return (rc, out, err)
 
@@ -160,7 +175,8 @@ class EjabberdUser(object):
         try:
             options = [self.user, self.host]
             (rc, out, err) = self.run_command('unregister', options)
-        except EjabberdUserException, e:
+        except EjabberdUserException:
+            e = get_exception()
             (rc, out, err) = (1, None, "required attribute(s) missing")
         return (rc, out, err)
 
@@ -209,6 +225,5 @@ def main():
     module.exit_json(**result)
 
 
-# import module snippets
-from ansible.module_utils.basic import *
-main()
+if __name__ == '__main__':
+    main()

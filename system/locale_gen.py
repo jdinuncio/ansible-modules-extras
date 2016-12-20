@@ -1,10 +1,24 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
-import os.path
-from subprocess import Popen, PIPE, call
-import re
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -13,6 +27,7 @@ short_description: Creates or removes locales.
 description:
      - Manages locales by editing /etc/locale.gen and invoking locale-gen.
 version_added: "1.6"
+author: "Augustus Kling (@AugustusKling)"
 options:
     name:
         description:
@@ -30,12 +45,30 @@ options:
 
 EXAMPLES = '''
 # Ensure a locale exists.
-- locale_gen: name=de_CH.UTF-8 state=present
+- locale_gen:
+    name: de_CH.UTF-8
+    state: present
 '''
+
+import os
+import os.path
+from subprocess import Popen, PIPE, call
+import re
+
+from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
 
 LOCALE_NORMALIZATION = {
     ".utf8": ".UTF-8",
     ".eucjp": ".EUC-JP",
+    ".iso885915": ".ISO-8859-15",
+    ".cp1251": ".CP1251",
+    ".koi8r": ".KOI8-R",
+    ".armscii8": ".ARMSCII-8",
+    ".euckr": ".EUC-KR",
+    ".gbk": ".GBK",
+    ".gb18030": ".GB18030",
+    ".euctw": ".EUC-TW",
 }
 
 # ===========================================
@@ -55,11 +88,12 @@ def is_available(name, ubuntuMode):
         __locales_available = '/etc/locale.gen'
 
     re_compiled = re.compile(__regexp)
-    with open(__locales_available, 'r') as fd:
-        for line in fd:
-            result = re_compiled.match(line)
-            if result and result.group('locale') == name:
-                return True
+    fd = open(__locales_available, 'r')
+    for line in fd:
+        result = re_compiled.match(line)
+        if result and result.group('locale') == name:
+            return True
+    fd.close()
     return False
 
 def is_present(name):
@@ -70,16 +104,22 @@ def is_present(name):
 def fix_case(name):
     """locale -a might return the encoding in either lower or upper case.
     Passing through this function makes them uniform for comparisons."""
-    for s, r in LOCALE_NORMALIZATION.iteritems():
+    for s, r in LOCALE_NORMALIZATION.items():
         name = name.replace(s, r)
     return name
 
 def replace_line(existing_line, new_line):
     """Replaces lines in /etc/locale.gen"""
-    with open("/etc/locale.gen", "r") as f:
+    try:
+        f = open("/etc/locale.gen", "r")
         lines = [line.replace(existing_line, new_line) for line in f]
-    with open("/etc/locale.gen", "w") as f:
+    finally:
+        f.close()
+    try:
+        f = open("/etc/locale.gen", "w")
         f.write("".join(lines))
+    finally:
+        f.close()
 
 def set_locale(name, enabled=True):
     """ Sets the state of the locale. Defaults to enabled. """
@@ -88,10 +128,16 @@ def set_locale(name, enabled=True):
         new_string = '%s \g<charset>' % (name)
     else:
         new_string = '# %s \g<charset>' % (name)
-    with open("/etc/locale.gen", "r") as f:
+    try:
+        f = open("/etc/locale.gen", "r")
         lines = [re.sub(search_string, new_string, line) for line in f]
-    with open("/etc/locale.gen", "w") as f:
+    finally:
+        f.close()
+    try:
+        f = open("/etc/locale.gen", "w")
         f.write("".join(lines))
+    finally:
+        f.close()
 
 def apply_change(targetState, name):
     """Create or remove locale.
@@ -124,13 +170,19 @@ def apply_change_ubuntu(targetState, name):
         localeGenExitValue = call(["locale-gen", name])
     else:
         # Delete locale involves discarding the locale from /var/lib/locales/supported.d/local and regenerating all locales.
-        with open("/var/lib/locales/supported.d/local", "r") as f:
+        try:
+            f = open("/var/lib/locales/supported.d/local", "r")
             content = f.readlines()
-        with open("/var/lib/locales/supported.d/local", "w") as f:
+        finally:
+            f.close()
+        try:
+            f = open("/var/lib/locales/supported.d/local", "w")
             for line in content:
                 locale, charset = line.split(' ')
                 if locale != name:
                     f.write(line)
+        finally:
+            f.close()
         # Purge locales and regenerate.
         # Please provide a patch if you know how to avoid regenerating the locales to keep!
         localeGenExitValue = call(["locale-gen", "--purge"])
@@ -155,7 +207,7 @@ def main():
     state = module.params['state']
 
     if not os.path.exists("/etc/locale.gen"):
-        if os.path.exists("/var/lib/locales/supported.d/local"):
+        if os.path.exists("/var/lib/locales/supported.d/"):
             # Ubuntu created its own system to manage locales.
             ubuntuMode = True
         else:
@@ -168,7 +220,10 @@ def main():
         module.fail_json(msg="The locales you've entered is not available "
                              "on your system.")
 
-    prev_state = "present" if is_present(name) else "absent"
+    if is_present(name):
+        prev_state = "present"
+    else:
+        prev_state = "absent"
     changed = (prev_state!=state)
     
     if module.check_mode:
@@ -180,12 +235,12 @@ def main():
                     apply_change(state, name)
                 else:
                     apply_change_ubuntu(state, name)
-            except EnvironmentError as e:
+            except EnvironmentError:
+                e = get_exception()
                 module.fail_json(msg=e.strerror, exitValue=e.errno)
 
         module.exit_json(name=name, changed=changed, msg="OK")
 
-# import module snippets
-from ansible.module_utils.basic import *
 
-main()
+if __name__ == '__main__':
+    main()

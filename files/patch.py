@@ -19,10 +19,16 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: patch
-author: Luis Alberto Perez Lazaro, Jakub Jirutka
+author:
+    - "Jakub Jirutka (@jirutka)"
+    - "Luis Alberto Perez Lazaro (@luisperlaz)"
 version_added: 1.9
 description:
     - Apply patch files using the GNU patch tool.
@@ -44,17 +50,17 @@ options:
   src:
     description:
       - Path of the patch file as accepted by the GNU patch tool. If
-        C(remote_src) is False, the patch source file is looked up from the
+        C(remote_src) is 'no', the patch source file is looked up from the
         module's "files" directory.
     required: true
     aliases: [ "patchfile" ]
   remote_src:
     description:
-      - If False, it will search for src at originating/master machine, if True it will
-        go to the remote/target machine for the src. Default is False.
-    choices: [ "True", "False" ]
+      - If C(no), it will search for src at originating/master machine, if C(yes) it will
+        go to the remote/target machine for the src. Default is C(no).
+    choices: [ "yes", "no" ]
     required: false
-    default: "False"
+    default: "no"
   strip:
     description:
       - Number that indicates the smallest prefix containing leading slashes
@@ -63,6 +69,22 @@ options:
     required: false
     type: "int"
     default: "0"
+  backup:
+    version_added: "2.0"
+    description:
+      - passes --backup --version-control=numbered to patch, 
+        producing numbered backup copies
+    choices: [ 'yes', 'no' ]
+    default: 'no'
+  binary:
+    version_added: "2.0"
+    description:
+      - Setting to C(yes) will disable patch's heuristic for transforming CRLF
+        line endings into LF. Line endings of src and dest must match. If set to
+        C(no), patch will replace CRLF in src files on POSIX.
+    required: false
+    type: "bool"
+    default: "no"
 note:
   - This module requires GNU I(patch) utility to be installed on the remote host.
 '''
@@ -88,10 +110,12 @@ class PatchError(Exception):
     pass
 
 
-def is_already_applied(patch_func, patch_file, basedir, dest_file=None, strip=0):
+def is_already_applied(patch_func, patch_file, basedir, dest_file=None, binary=False, strip=0):
     opts = ['--quiet', '--reverse', '--forward', '--dry-run',
             "--strip=%s" % strip, "--directory='%s'" % basedir,
             "--input='%s'" % patch_file]
+    if binary:
+        opts.append('--binary')
     if dest_file:
         opts.append("'%s'" % dest_file)
 
@@ -99,18 +123,22 @@ def is_already_applied(patch_func, patch_file, basedir, dest_file=None, strip=0)
     return rc == 0
 
 
-def apply_patch(patch_func, patch_file, basedir, dest_file=None, strip=0, dry_run=False):
+def apply_patch(patch_func, patch_file, basedir, dest_file=None, binary=False, strip=0, dry_run=False, backup=False):
     opts = ['--quiet', '--forward', '--batch', '--reject-file=-',
             "--strip=%s" % strip, "--directory='%s'" % basedir,
             "--input='%s'" % patch_file]
     if dry_run:
         opts.append('--dry-run')
+    if binary:
+        opts.append('--binary')
     if dest_file:
         opts.append("'%s'" % dest_file)
+    if backup:
+        opts.append('--backup --version-control=numbered')
 
     (rc, out, err) = patch_func(opts)
     if rc != 0:
-        msg = out if not err else err
+        msg = err or out
         raise PatchError(msg)
 
 
@@ -122,6 +150,10 @@ def main():
             'basedir': {},
             'strip':   {'default': 0, 'type': 'int'},
             'remote_src': {'default': False, 'type': 'bool'},
+            # NB: for 'backup' parameter, semantics is slightly different from standard
+            #     since patch will create numbered copies, not strftime("%Y-%m-%d@%H:%M:%S~")
+            'backup': {'default': False, 'type': 'bool'},
+            'binary': {'default': False, 'type': 'bool'},
         },
         required_one_of=[['dest', 'basedir']],
         supports_check_mode=True
@@ -130,6 +162,7 @@ def main():
     # Create type object as namespace for module params
     p = type('Params', (), module.params)
 
+    p.src = os.path.expanduser(p.src)
     if not os.access(p.src, R_OK):
         module.fail_json(msg="src %s doesn't exist or not readable" % (p.src))
 
@@ -151,16 +184,19 @@ def main():
     p.src = os.path.abspath(p.src)
     
     changed = False
-    if not is_already_applied(patch_func, p.src, p.basedir, dest_file=p.dest, strip=p.strip):
+    if not is_already_applied(patch_func, p.src, p.basedir, dest_file=p.dest, binary=p.binary, strip=p.strip):
         try:
-            apply_patch(patch_func, p.src, p.basedir, dest_file=p.dest, strip=p.strip,
-                        dry_run=module.check_mode)
+            apply_patch( patch_func, p.src, p.basedir, dest_file=p.dest, binary=p.binary, strip=p.strip,
+                         dry_run=module.check_mode, backup=p.backup )
             changed = True
-        except PatchError, e:
+        except PatchError:
+            e = get_exception()
             module.fail_json(msg=str(e))
 
     module.exit_json(changed=changed)
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

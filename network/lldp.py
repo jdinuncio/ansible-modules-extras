@@ -16,15 +16,20 @@
 
 import subprocess
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: lldp
+requirements: [ lldpctl ]
 version_added: 1.6
 short_description: get details reported by lldp
 description:
   - Reads data out of lldpctl
 options: {}
-author: Andy Hill
+author: "Andy Hill (@andyhky)"
 notes:
   - Requires lldpd running and lldp enabled on switches 
 '''
@@ -35,8 +40,9 @@ EXAMPLES = '''
    lldp:
  
  - name: Print each switch/port
-   debug: msg="{{ lldp[item]['chassis']['name'] }} / {{ lldp[item]['port']['ifalias'] }}
-   with_items: lldp.keys()
+   debug:
+    msg: "{{ lldp[item]['chassis']['name'] }} / {{ lldp[item]['port']['ifalias'] }}"
+   with_items: "{{ lldp.keys() }}"
 
 # TASK: [Print each switch/port] ***********************************************************
 # ok: [10.13.0.22] => (item=eth2) => {"item": "eth2", "msg": "switch1.example.com / Gi0/24"}
@@ -58,6 +64,8 @@ def gather_lldp():
                 path, value = entry.strip().split("=", 1)
                 path = path.split(".")
                 path_components, final = path[:-1], path[-1]
+            else:
+                value = current_dict[final] + '\n' + entry
 
             current_dict = output_dict
             for path_component in path_components:
@@ -79,5 +87,6 @@ def main():
    
 # import module snippets
 from ansible.module_utils.basic import *
-main()
 
+if __name__ == '__main__':
+    main()

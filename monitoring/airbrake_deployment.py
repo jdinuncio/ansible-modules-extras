@@ -18,11 +18,15 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: airbrake_deployment
 version_added: "1.2"
-author: Bruce Pennypacker
+author: "Bruce Pennypacker (@bpennypacker)"
 short_description: Notify airbrake about app deployments
 description:
    - Notify airbrake about app deployments (see http://help.airbrake.io/kb/api-2/deploy-tracking)
@@ -51,7 +55,7 @@ options:
     description:
       - Optional URL to submit the notification to. Use to send notifications to Airbrake-compliant tools like Errbit.
     required: false
-    default: "https://airbrake.io/deploys"
+    default: "https://airbrake.io/deploys.txt"
     version_added: "1.5"
   validate_certs:
     description:
@@ -61,16 +65,18 @@ options:
     default: 'yes'
     choices: ['yes', 'no']
 
-# informational: requirements for nodes
-requirements: [ urllib, urllib2 ]
+requirements: []
 '''
 
 EXAMPLES = '''
-- airbrake_deployment: token=AAAAAA
-                       environment='staging'
-                       user='ansible'
-                       revision=4.2
+- airbrake_deployment:
+    token: AAAAAA
+    environment: staging
+    user: ansible
+    revision: '4.2'
 '''
+
+import urllib
 
 # ===========================================
 # Module execution.
@@ -80,7 +86,7 @@ def main():
 
     module = AnsibleModule(
         argument_spec=dict(
-            token=dict(required=True),
+            token=dict(required=True, no_log=True),
             environment=dict(required=True),
             user=dict(required=False),
             repo=dict(required=False),
@@ -126,5 +132,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 
-main()
-
+if __name__ == '__main__':
+    main()

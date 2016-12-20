@@ -18,6 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: rabbitmq_plugin
@@ -25,7 +29,7 @@ short_description: Adds or removes plugins to RabbitMQ
 description:
   - Enables or disables RabbitMQ plugins
 version_added: "1.1"
-author: Chris Hoffman
+author: '"Chris Hoffman (@chrishoffman)"'
 options:
   names:
     description:
@@ -56,15 +60,29 @@ options:
 
 EXAMPLES = '''
 # Enables the rabbitmq_management plugin
-- rabbitmq_plugin: names=rabbitmq_management state=enabled
+- rabbitmq_plugin:
+    names: rabbitmq_management
+    state: enabled
 '''
+
+import os
 
 class RabbitMqPlugins(object):
     def __init__(self, module):
         self.module = module
 
         if module.params['prefix']:
-            self._rabbitmq_plugins = module.params['prefix'] + "/sbin/rabbitmq-plugins"
+            if os.path.isdir(os.path.join(module.params['prefix'], 'bin')):
+                bin_path = os.path.join(module.params['prefix'], 'bin')
+            elif os.path.isdir(os.path.join(module.params['prefix'], 'sbin')):
+                bin_path = os.path.join(module.params['prefix'], 'sbin')
+            else:
+                # No such path exists.
+                raise Exception("No binary folder in prefix %s" %
+                        module.params['prefix'])
+
+            self._rabbitmq_plugins = bin_path + "/rabbitmq-plugins"
+
         else:
             self._rabbitmq_plugins = module.get_bin_path('rabbitmq-plugins', True)
 
@@ -76,13 +94,21 @@ class RabbitMqPlugins(object):
         return list()
 
     def get_all(self):
-        return self._exec(['list', '-E', '-m'], True)
+        list_output = self._exec(['list', '-E', '-m'], True)
+        plugins = []
+        for plugin in list_output:
+            if not plugin:
+                break
+            plugins.append(plugin)
+
+        return plugins
 
     def enable(self, name):
         self._exec(['enable', name])
 
     def disable(self, name):
         self._exec(['disable', name])
+
 
 def main():
     arg_spec = dict(
@@ -127,4 +153,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

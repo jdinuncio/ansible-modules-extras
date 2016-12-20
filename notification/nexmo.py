@@ -18,13 +18,17 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = """
 module: nexmo
 short_description: Send a SMS via nexmo
 description:
     - Send a SMS message via nexmo
 version_added: 1.6
-author: Matt Martz
+author: "Matt Martz (@sivel)"
 options:
   api_key:
     description:
@@ -71,6 +75,7 @@ EXAMPLES = """
     msg: "{{ inventory_hostname }} completed"
 """
 
+import urllib
 
 NEXMO_API = 'https://rest.nexmo.com/sms/json'
 
@@ -137,4 +142,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 
-main()
+if __name__ == '__main__':
+    main()

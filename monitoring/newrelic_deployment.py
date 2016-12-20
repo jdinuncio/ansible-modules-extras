@@ -18,18 +18,22 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: newrelic_deployment
 version_added: "1.2"
-author: Matt Coddington
+author: "Matt Coddington (@mcodd)"
 short_description: Notify newrelic about app deployments
 description:
-   - Notify newrelic about app deployments (see http://newrelic.github.io/newrelic_api/NewRelicApi/Deployment.html)
+   - Notify newrelic about app deployments (see https://docs.newrelic.com/docs/apm/new-relic-apm/maintenance/deployment-notifications#api)
 options:
   token:
     description:
-      - API token.
+      - API token, to place in the x-api-key header.
     required: true
   app_name:
     description:
@@ -72,16 +76,18 @@ options:
     choices: ['yes', 'no']
     version_added: 1.5.1
 
-# informational: requirements for nodes
-requirements: [ urllib, urllib2 ]
+requirements: []
 '''
 
 EXAMPLES = '''
-- newrelic_deployment: token=AAAAAA
-                       app_name=myapp
-                       user='ansible deployment'
-                       revision=1.0
+- newrelic_deployment:
+    token: AAAAAA
+    app_name: myapp
+    user: ansible deployment
+    revision: '1.0'
 '''
+
+import urllib
 
 # ===========================================
 # Module execution.
@@ -91,7 +97,7 @@ def main():
 
     module = AnsibleModule(
         argument_spec=dict(
-            token=dict(required=True),
+            token=dict(required=True, no_log=True),
             app_name=dict(required=False),
             application_id=dict(required=False),
             changelog=dict(required=False),
@@ -102,6 +108,7 @@ def main():
             environment=dict(required=False),
             validate_certs = dict(default='yes', type='bool'),
         ),
+        required_one_of=[['app_name', 'application_id']],
         supports_check_mode=True
     )
 
@@ -141,5 +148,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 
-main()
-
+if __name__ == '__main__':
+    main()

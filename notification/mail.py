@@ -18,9 +18,13 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'committer',
+                    'version': '1.0'}
+
 DOCUMENTATION = """
 ---
-author: Dag Wieers
+author: "Dag Wieers (@dagwieers)" 
 module: mail
 short_description: Send an email
 description:
@@ -62,7 +66,6 @@ options:
   subject:
     description:
       - The subject of the email being sent.
-    aliases: [ msg ]
     required: true
   body:
     description:
@@ -111,34 +114,52 @@ options:
       - The character set of email being sent
     default: 'us-ascii'
     required: false
+  subtype:
+    description:
+      - The minor mime type, can be either text or html. The major type is always text.
+    default: 'plain'
+    required: false
+    version_added: "2.0"
 """
 
 EXAMPLES = '''
 # Example playbook sending mail to root
-- local_action: mail msg='System {{ ansible_hostname }} has been successfully provisioned.'
+- mail:
+    subject: 'System {{ ansible_hostname }} has been successfully provisioned.'
+  delegate_to: localhost
 
 # Sending an e-mail using Gmail SMTP servers
-- local_action: mail
-                host='smtp.gmail.com'
-                port=587
-                username=username@gmail.com
-                password='mysecret'
-                to="John Smith <john.smith@example.com>"
-                subject='Ansible-report'
-                msg='System {{ ansible_hostname }} has been successfully provisioned.'
+- mail:
+    host: smtp.gmail.com
+    port: 587
+    username: username@gmail.com
+    password: mysecret
+    to: John Smith <john.smith@example.com>
+    subject: Ansible-report
+    body: 'System {{ ansible_hostname }} has been successfully provisioned.'
+  delegate_to: localhost
 
 # Send e-mail to a bunch of users, attaching files
-- local_action: mail
-                host='127.0.0.1'
-                port=2025
-                subject="Ansible-report"
-                body="Hello, this is an e-mail. I hope you like it ;-)"
-                from="jane@example.net (Jane Jolie)"
-                to="John Doe <j.d@example.org>, Suzie Something <sue@example.com>"
-                cc="Charlie Root <root@localhost>"
-                attach="/etc/group /tmp/pavatar2.png"
-                headers=Reply-To=john@example.com|X-Special="Something or other"
-                charset=utf8
+- mail:
+    host: 127.0.0.1
+    port: 2025
+    subject: Ansible-report
+    body: Hello, this is an e-mail. I hope you like it ;-)
+    from: jane@example.net (Jane Jolie)
+    to: John Doe <j.d@example.org>, Suzie Something <sue@example.com>
+    cc: Charlie Root <root@localhost>
+    attach: /etc/group /tmp/pavatar2.png
+    headers: 'Reply-To=john@example.com|X-Special="Something or other"'
+    charset: utf8
+  delegate_to: localhost
+
+# Sending an e-mail using the remote machine, not the Ansible controller node
+- mail:
+    host: localhost
+    port: 25
+    to: John Smith <john.smith@example.com>
+    subject: Ansible-report
+    body: 'System {{ ansible_hostname }} has been successfully provisioned.'
 '''
 
 import os
@@ -166,7 +187,7 @@ def main():
     module = AnsibleModule(
         argument_spec = dict(
             username = dict(default=None),
-            password = dict(default=None),
+            password = dict(default=None, no_log=True),
             host = dict(default='localhost'),
             port = dict(default='25'),
             sender = dict(default='root', aliases=['from']),
@@ -177,7 +198,8 @@ def main():
             body = dict(default=None),
             attach = dict(default=None),
             headers = dict(default=None),
-            charset = dict(default='us-ascii')
+            charset = dict(default='us-ascii'),
+            subtype = dict(default='plain')
         )
     )
 
@@ -194,6 +216,7 @@ def main():
     attach_files = module.params.get('attach')
     headers = module.params.get('headers')
     charset = module.params.get('charset')
+    subtype = module.params.get('subtype')
     sender_phrase, sender_addr = parseaddr(sender)
 
     if not body:
@@ -204,7 +227,8 @@ def main():
             smtp = smtplib.SMTP_SSL(host, port=int(port))
         except (smtplib.SMTPException, ssl.SSLError):
             smtp = smtplib.SMTP(host, port=int(port))
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(rc=1, msg='Failed to send mail to server %s on port %s: %s' % (host, port, e))
 
     smtp.ehlo()
@@ -253,7 +277,7 @@ def main():
     if len(cc_list) > 0:
         msg['Cc'] = ", ".join(cc_list)
 
-    part = MIMEText(body + "\n\n", _charset=charset)
+    part = MIMEText(body + "\n\n", _subtype=subtype, _charset=charset)
     msg.attach(part)
 
     if attach_files is not None:
@@ -269,15 +293,16 @@ def main():
 
                 part.add_header('Content-disposition', 'attachment', filename=os.path.basename(file))
                 msg.attach(part)
-            except Exception, e:
+            except Exception:
+                e = get_exception()
                 module.fail_json(rc=1, msg="Failed to send mail: can't attach file %s: %s" % (file, e))
-                sys.exit()
 
     composed = msg.as_string()
 
     try:
         smtp.sendmail(sender_addr, set(addr_list), composed)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(rc=1, msg='Failed to send mail to %s: %s' % (", ".join(addr_list), e))
 
     smtp.quit()
@@ -286,4 +311,7 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.pycompat24 import get_exception
+
+if __name__ == '__main__':
+    main()

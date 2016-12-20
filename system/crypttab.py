@@ -18,6 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: crypttab
@@ -29,7 +33,7 @@ options:
   name:
     description:
       - Name of the encrypted block device as it appears in the C(/etc/crypttab) file, or
-        optionaly prefixed with C(/dev/mapper), as it appears in the filesystem. I(/dev/mapper)
+        optionaly prefixed with C(/dev/mapper/), as it appears in the filesystem. I(/dev/mapper/)
         will be stripped from I(name).
     required: true
     default: null
@@ -52,7 +56,7 @@ options:
     default: null
   password:
     description:
-      - Encryption password, the path to a file containing the pasword, or
+      - Encryption password, the path to a file containing the password, or
         'none' or '-' if the password should be entered at boot.
     required: false
     default: "none"
@@ -69,18 +73,29 @@ options:
 
 notes: []
 requirements: []
-author: Steve <yo@groks.org>
+author: "Steve (@groks)"
 '''
 
 EXAMPLES = '''
-- name: Set the options explicitly a deivce which must already exist
-  crypttab: name=luks-home state=present opts=discard,cipher=aes-cbc-essiv:sha256
+
+# Since column is a special character in YAML, if your string contains a column, it's better to use quotes around the string
+- name: Set the options explicitly a device which must already exist
+  crypttab:
+    name: luks-home
+    state: present
+    opts: 'discard,cipher=aes-cbc-essiv:sha256'
 
 - name: Add the 'discard' option to any existing options for all devices
-  crypttab: name={{ item.device }} state=opts_present opts=discard
-  with_items: ansible_mounts
+  crypttab:
+    name: '{{ item.device }}'
+    state: opts_present
+    opts: discard
+  with_items: '{{ ansible_mounts }}'
   when: '/dev/mapper/luks-' in {{ item.device }}
 '''
+
+from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
 
 def main():
 
@@ -89,19 +104,22 @@ def main():
             name           = dict(required=True),
             state          = dict(required=True, choices=['present', 'absent', 'opts_present', 'opts_absent']),
             backing_device = dict(default=None),
-            password       = dict(default=None),
+            password       = dict(default=None, type='path'),
             opts           = dict(default=None),
-            path           = dict(default='/etc/crypttab')
+            path           = dict(default='/etc/crypttab', type='path')
         ),
         supports_check_mode = True
     )
 
-    name           = module.params['name'].lstrip('/dev/mapper')
     backing_device = module.params['backing_device']
     password       = module.params['password']
     opts           = module.params['opts']
     state          = module.params['state']
     path           = module.params['path']
+    name           = module.params['name']
+    if name.startswith('/dev/mapper/'):
+        name = name[len('/dev/mapper/'):]
+
 
     if state != 'absent' and backing_device is None and password is None and opts is None:
         module.fail_json(msg="expected one or more of 'backing_device', 'password' or 'opts'",
@@ -123,7 +141,8 @@ def main():
     try:
         crypttab = Crypttab(path)
         existing_line = crypttab.match(name)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg="failed to open and parse crypttab file: %s" % e,
                          **module.params)
 
@@ -155,8 +174,11 @@ def main():
 
 
     if changed and not module.check_mode:
-        with open(path, 'wb') as f:
+        try:
+            f = open(path, 'wb')
             f.write(str(crypttab))
+        finally:
+            f.close()
 
     module.exit_json(changed=changed, msg=reason, **module.params)
 
@@ -172,9 +194,12 @@ class Crypttab(object):
                 os.makedirs(os.path.dirname(path))
             open(path,'a').close()
 
-        with open(path, 'r') as f:
+        try:
+            f = open(path, 'r')
             for line in f.readlines():
                 self._lines.append(Line(line))
+        finally:
+            f.close()
 
     def add(self, line):
         self._lines.append(line)
@@ -196,6 +221,8 @@ class Crypttab(object):
         for line in self._lines:
             lines.append(str(line))
         crypttab = '\n'.join(lines)
+        if len(crypttab) == 0:
+            crypttab += '\n'
         if crypttab[-1] != '\n':
             crypttab += '\n'
         return crypttab
@@ -242,10 +269,19 @@ class Line(object):
 
     def _split_line(self, line):
         fields = line.split()
+        try:
+            field2 = fields[2]
+        except IndexError:
+            field2 = None
+        try:
+            field3 = fields[3]
+        except IndexError:
+            field3 = None
+
         return (fields[0],
                 fields[1],
-                fields[2] if len(fields) >= 3 else None,
-                fields[3] if len(fields) >= 4 else None)
+                field2,
+                field3)
 
     def remove(self):
         self.line, self.name, self.backing_device = '', None, None
@@ -260,7 +296,10 @@ class Line(object):
         if self.valid():
             fields = [self.name, self.backing_device]
             if self.password is not None or self.opts:
-                fields.append(self.password if self.password is not None else 'none')
+                if self.password is not None:
+                    fields.append(self.password)
+                else:
+                    self.password('none')
             if self.opts:
                 fields.append(str(self.opts))
             return ' '.join(fields)
@@ -276,13 +315,16 @@ class Options(dict):
         if opts_string is not None:
             for opt in opts_string.split(','):
                 kv = opt.split('=')
-                k, v = (kv[0], kv[1]) if len(kv) > 1 else (kv[0], None)
+                if len(kv) > 1:
+                    k, v = (kv[0], kv[1])
+                else:
+                    k, v = (kv[0], None)
                 self[k] = v
 
     def add(self, opts_string):
         changed = False
         for k, v in Options(opts_string).items():
-            if self.has_key(k):
+            if k in self:
                 if self[k] != v:
                     changed = True
             else:
@@ -293,7 +335,7 @@ class Options(dict):
     def remove(self, opts_string):
         changed = False
         for k in Options(opts_string):
-            if self.has_key(k):
+            if k in self:
                 del self[k]
                 changed = True
         return changed, 'removed options'
@@ -311,7 +353,7 @@ class Options(dict):
         return iter(self.itemlist)
 
     def __setitem__(self, key, value):
-        if not self.has_key(key):
+        if key not in self:
             self.itemlist.append(key)
         super(Options, self).__setitem__(key, value)
 
@@ -324,9 +366,13 @@ class Options(dict):
                     and sorted(self.items()) == sorted(obj.items()))
 
     def __str__(self):
-        return ','.join([k if v is None else '%s=%s' % (k, v)
-                         for k, v in self.items()])
+        ret = []
+        for k, v in self.items():
+            if v is None:
+                ret.append(k)
+            else:
+                ret.append('%s=%s' % (k, v))
+        return ','.join(ret)
 
-# import module snippets
-from ansible.module_utils.basic import *
-main()
+if __name__ == '__main__':
+    main()

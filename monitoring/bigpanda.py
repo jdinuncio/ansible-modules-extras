@@ -1,12 +1,32 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
 module: bigpanda
-author: BigPanda
+author: "Hagai Kariti (@hkariti)"
 short_description: Notify BigPanda about deployments
 version_added: "1.8"
-description: 
+description:
    - Notify BigPanda when deployments start and end (successfully or not). Returns a deployment object containing all the parameters for future module calls.
 options:
   component:
@@ -59,27 +79,38 @@ options:
     choices: ['yes', 'no']
 
 # informational: requirements for nodes
-requirements: [ urllib, urllib2 ]
+requirements: [ ]
 '''
 
 EXAMPLES = '''
-- bigpanda: component=myapp version=1.3 token={{ bigpanda_token }} state=started
+- bigpanda:
+    component: myapp
+    version: '1.3'
+    token: '{{ bigpanda_token }}'
+    state: started
 ...
-- bigpanda: component=myapp version=1.3 token={{ bigpanda_token }} state=finished
+- bigpanda:
+    component: myapp
+    version: '1.3'
+    token: '{{ bigpanda_token }}'
+    state: finished
 
-or using a deployment object:
-- bigpanda: component=myapp version=1.3 token={{ bigpanda_token }} state=started
-  register: deployment
-
-- bigpanda: state=finished
-  args: deployment
-
-If outside servers aren't reachable from your machine, use local_action and pass the hostname:
-- local_action: bigpanda component=myapp version=1.3 hosts={{ansible_hostname}} token={{ bigpanda_token }} state=started
+# If outside servers aren't reachable from your machine, use delegate_to and override hosts:
+- bigpanda:
+    component: myapp
+    version: '1.3'
+    token: '{{ bigpanda_token }}'
+    hosts: '{{ ansible_hostname }}'
+    state: started
+  delegate_to: localhost
   register: deployment
 ...
-- local_action: bigpanda state=finished
-  args: deployment
+- bigpanda:
+    component: '{{ deployment.component }}'
+    version: '{{ deployment.version }}'
+    token: '{{ deployment.token }}'
+    state: finished
+  delegate_to: localhost
 '''
 
 # ===========================================
@@ -93,7 +124,7 @@ def main():
         argument_spec=dict(
             component=dict(required=True, aliases=['name']),
             version=dict(required=True),
-            token=dict(required=True),
+            token=dict(required=True, no_log=True),
             state=dict(required=True, choices=['started', 'finished', 'failed']),
             hosts=dict(required=False, default=[socket.gethostname()], aliases=['host']),
             env=dict(required=False),
@@ -162,11 +193,13 @@ def main():
             module.exit_json(changed=True, **deployment)
         else:
             module.fail_json(msg=json.dumps(info))
-    except Exception as e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg=str(e))
 
 # import module snippets
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
-
-main()
+from ansible.module_utils.pycompat24 import get_exception
+if __name__ == '__main__':
+    main()

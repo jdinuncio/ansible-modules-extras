@@ -1,5 +1,24 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -25,11 +44,11 @@ options:
     required: true
   url:
     description:
-      - Service URL for the web client 
+      - Service URL for the web client
     required: false
   icon_url:
     description:
-      -  Icon for the service 
+      -  Icon for the service
     required: false
   validate_certs:
     description:
@@ -39,7 +58,7 @@ options:
     default: 'yes'
     choices: ['yes', 'no']
     version_added: 1.5.1
-author: Jonas Pfenniger <zimbatm@zimbatm.com>
+author: "Jonas Pfenniger (@zimbatm)"
 '''
 
 EXAMPLES = '''
@@ -48,6 +67,8 @@ EXAMPLES = '''
     service=my-app
     message=deployed {{ target }}
 '''
+
+import urllib
 
 BASE_URL = 'https://grove.io/api/notice/%s/'
 
@@ -74,7 +95,7 @@ def do_notify_grove(module, channel_token, service, message, url=None, icon_url=
 def main():
     module = AnsibleModule(
         argument_spec = dict(
-            channel_token = dict(type='str', required=True),
+            channel_token = dict(type='str', required=True, no_log=True),
             message = dict(type='str', required=True),
             service = dict(type='str', default='ansible'),
             url = dict(type='str', default=None),
@@ -97,4 +118,6 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
-main()
+
+if __name__ == '__main__':
+    main()

@@ -1,4 +1,23 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 
@@ -7,7 +26,9 @@ short_description: Pause/unpause Pingdom alerts
 description:
     - This module will let you pause/unpause Pingdom alerts
 version_added: "1.2"
-author: Justin Johns
+author: 
+    - "Dylan Silva (@thaumos)"
+    - "Justin Johns"
 requirements:
     - "This pingdom python library: https://github.com/mbabineau/pingdom-python"
 options:
@@ -52,18 +73,20 @@ notes:
 
 EXAMPLES = '''
 # Pause the check with the ID of 12345.
-- pingdom: uid=example@example.com
-           passwd=password123
-           key=apipassword123
-           checkid=12345
-           state=paused
+- pingdom:
+    uid: example@example.com
+    passwd: password123
+    key: apipassword123
+    checkid: 12345
+    state: paused
 
 # Unpause the check with the ID of 12345.
-- pingdom: uid=example@example.com
-           passwd=password123
-           key=apipassword123
-           checkid=12345
-           state=running
+- pingdom:
+    uid: example@example.com
+    passwd: password123
+    key: apipassword123
+    checkid: 12345
+    state: running
 '''
 
 try:
@@ -111,7 +134,7 @@ def main():
     )
 
     if not HAS_PINGDOM:
-        module.fail_json(msg="Missing requried pingdom module (check docs)")
+        module.fail_json(msg="Missing required pingdom module (check docs)")
 
     checkid = module.params['checkid']
     state = module.params['state']
@@ -132,4 +155,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

@@ -20,6 +20,10 @@
 #
 
 
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'core',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: getent
@@ -54,31 +58,50 @@ options:
 notes:
    - "Not all databases support enumeration, check system documentation for details"
 requirements: [ ]
-author: Brian Coca
+author: "Brian Coca (@bcoca)"
 '''
 
 EXAMPLES = '''
 # get root user info
-- getent: database=passwd key=root
-- debug: var=getent_passwd
+- getent:
+    database: passwd
+    key: root
+- debug:
+    var: getent_passwd
 
 # get all groups
-- getent: database=group split=':'
-- debug: var=getent_group
+- getent:
+    database: group
+    split: ':'
+- debug:
+    var: getent_group
 
 # get all hosts, split by tab
-- getent: database=hosts
-- debug: var=getent_hosts
+- getent:
+    database: hosts
+- debug:
+    var: getent_hosts
 
 # get http service info, no error if missing
-- getent: database=services key=http fail_key=False
-- debug: var=getent_services
+- getent:
+    database: services
+    key: http
+    fail_key: False
+- debug:
+    var: getent_services
 
 # get user password hash (requires sudo/root)
-- getent: database=shadow key=www-data split=:
-- debug: var=getent_shadow
+- getent:
+    database: shadow
+    key: www-data
+    split: ':'
+- debug:
+    var: getent_shadow
 
 '''
+
+from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
 
 def main():
     module = AnsibleModule(
@@ -110,7 +133,8 @@ def main():
 
     try:
         rc, out, err = module.run_command(cmd)
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg=str(e))
 
     msg = "Unexpected failure!"
@@ -136,8 +160,6 @@ def main():
 
     module.fail_json(msg=msg)
 
-# import module snippets
-from ansible.module_utils.basic import *
 
-main()
-
+if __name__ == '__main__':
+    main()

@@ -19,6 +19,10 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = """
 module: gluster_volume
 short_description: Manage GlusterFS volumes
@@ -56,20 +60,34 @@ options:
     default: null
     description:
       - Stripe count for volume
+  disperses:
+    required: false
+    default: null
+    description:
+      - Disperse count for volume
+    version_added: "2.2"
+  redundancies:
+    required: false
+    default: null
+    description:
+      - Redundancy count for volume
+    version_added: "2.2"
   transport:
     required: false
     choices: [ 'tcp', 'rdma', 'tcp,rdma' ]
     default: 'tcp'
     description:
       - Transport type for volume
-  brick:
+  bricks:
     required: false
     default: null
     description:
-      - Brick path on servers
+      - Brick paths on servers. Multiple brick paths can be separated by commas
+    aliases: ['brick']
   start_on_create:
     choices: [ 'yes', 'no']
     required: false
+    default: 'yes'
     description:
       - Controls whether the volume is started after creation or not, defaults to yes
   rebalance:
@@ -102,50 +120,86 @@ options:
 notes:
   - "Requires cli tools for GlusterFS on servers"
   - "Will add new bricks, but not remove them"
-author: Taneli Leppä
+author: "Taneli Leppä (@rosmo)"
 """
 
 EXAMPLES = """
 - name: create gluster volume
-  gluster_volume: state=present name=test1 brick=/bricks/brick1/g1 rebalance=yes cluster:"{{ play_hosts }}"
+  gluster_volume:
+    state: present
+    name: test1
+    bricks: /bricks/brick1/g1
+    rebalance: yes
+    cluster:
+      - 192.0.2.10
+      - 192.0.2.11
   run_once: true
 
 - name: tune
-  gluster_volume: state=present name=test1 options='{performance.cache-size: 256MB}'
+  gluster_volume:
+    state: present
+    name: test1
+    options:
+      performance.cache-size: 256MB
 
 - name: start gluster volume
-  gluster_volume: status=started name=test1
+  gluster_volume:
+    state: started
+    name: test1
 
 - name: limit usage
-  gluster_volume: state=present name=test1 directory=/foo quota=20.0MB
+  gluster_volume:
+    state: present
+    name: test1
+    directory: /foo
+    quota: 20.0MB
 
 - name: stop gluster volume
-  gluster_volume: state=stopped name=test1
+  gluster_volume:
+    state: stopped
+    name: test1
 
 - name: remove gluster volume
-  gluster_volume: state=absent name=test1
+  gluster_volume:
+    state: absent
+    name: test1
+
+- name: create gluster volume with multiple bricks
+  gluster_volume:
+    state: present
+    name: test2
+    bricks: /bricks/brick1/g2,/bricks/brick2/g2
+    cluster:
+      - 192.0.2.10
+      - 192.0.2.11
+  run_once: true
 """
 
 import shutil
 import time
 import socket
+from ansible.module_utils.pycompat24 import get_exception
+from ansible.module_utils.basic import *
 
 glusterbin = ''
 
 def run_gluster(gargs, **kwargs):
     global glusterbin
+    global module
     args = [glusterbin]
     args.extend(gargs)
     try:
         rc, out, err = module.run_command(args, **kwargs)
         if rc != 0:
-            module.fail_json(msg='error running gluster (%s) command (rc=%d): %s' % (' '.join(args), rc, out if out != '' else err))
-    except Exception, e:
+            module.fail_json(msg='error running gluster (%s) command (rc=%d): %s' % (' '.join(args), rc, out or err))
+    except Exception:
+        e = get_exception()
         module.fail_json(msg='error running gluster (%s) command: %s' % (' '.join(args), str(e)))
     return out
 
 def run_gluster_nofail(gargs, **kwargs):
     global glusterbin
+    global module
     args = [glusterbin]
     args.extend(gargs)
     rc, out, err = module.run_command(args, **kwargs)
@@ -155,11 +209,12 @@ def run_gluster_nofail(gargs, **kwargs):
 
 def run_gluster_yes(gargs):
     global glusterbin
+    global module
     args = [glusterbin]
     args.extend(gargs)
     rc, out, err = module.run_command(args, data='y\n')
     if rc != 0:
-        module.fail_json(msg='error running gluster (%s) command (rc=%d): %s' % (' '.join(args), rc, out if out != '' else err))
+        module.fail_json(msg='error running gluster (%s) command (rc=%d): %s' % (' '.join(args), rc, out or err))
     return out
 
 def get_peers():
@@ -169,16 +224,24 @@ def get_peers():
     hostname = None
     uuid = None
     state = None
+    shortNames = False
     for row in out.split('\n'):
         if ': ' in row:
             key, value = row.split(': ')
             if key.lower() == 'hostname':
                 hostname = value
+                shortNames = False
             if key.lower() == 'uuid':
                 uuid = value
             if key.lower() == 'state':
                 state = value
                 peers[hostname] = [ uuid, state ]
+        elif row.lower() == 'other names:':
+            shortNames = True
+        elif row != '' and shortNames == True:
+            peers[row] = [ uuid, state ]
+        elif row == '':
+            shortNames = False
     return peers
 
 def get_volumes():
@@ -239,20 +302,20 @@ def wait_for_peer(host):
         time.sleep(1)
     return False
 
-def probe(host):
-    run_gluster([ 'peer', 'probe', host ])
-    if not wait_for_peer(host):
-        module.fail_json(msg='failed to probe peer %s' % host)
+def probe(host, myhostname):
+    global module
+    out = run_gluster([ 'peer', 'probe', host ])
+    if out.find('localhost') == -1 and not wait_for_peer(host):
+        module.fail_json(msg='failed to probe peer %s on %s' % (host, myhostname))
     changed = True
 
 def probe_all_peers(hosts, peers, myhostname):
     for host in hosts:
+        host = host.strip() # Clean up any extra space for exact comparison
         if host not in peers:
-            # dont probe ourselves
-            if myhostname != host:
-                probe(host)
+            probe(host, myhostname)
 
-def create_volume(name, stripe, replica, transport, hosts, brick, force):
+def create_volume(name, stripe, replica, disperse, redundancy, transport, hosts, bricks, force):
     args = [ 'volume', 'create' ]
     args.append(name)
     if stripe:
@@ -261,10 +324,17 @@ def create_volume(name, stripe, replica, transport, hosts, brick, force):
     if replica:
         args.append('replica')
         args.append(str(replica))
+    if disperse:
+        args.append('disperse')
+        args.append(str(disperse))
+    if redundancy:
+        args.append('redundancy')
+        args.append(str(redundancy))
     args.append('transport')
     args.append(transport)
-    for host in hosts:
-        args.append(('%s:%s' % (host, brick)))
+    for brick in bricks:
+        for host in hosts:
+            args.append(('%s:%s' % (host, brick)))
     if force:
         args.append('force')
     run_gluster(args)
@@ -278,25 +348,33 @@ def stop_volume(name):
 def set_volume_option(name, option, parameter):
     run_gluster([ 'volume', 'set', name, option, parameter ])
 
-def add_brick(name, brick, force):
-    args = [ 'volume', 'add-brick', name, brick ]
+def add_bricks(name, new_bricks, stripe, replica, force):
+    args = [ 'volume', 'add-brick', name ]
+    if stripe:
+        args.append('stripe')
+        args.append(str(stripe))
+    if replica:
+        args.append('replica')
+        args.append(str(replica))
+    args.extend(new_bricks)
     if force:
         args.append('force')
     run_gluster(args)
 
 def do_rebalance(name):
-    run_gluster(['volume', 'rebalance', name, 'start'])
+    run_gluster([ 'volume', 'rebalance', name, 'start' ])
 
 def enable_quota(name):
     run_gluster([ 'volume', 'quota', name, 'enable' ])
 
 def set_quota(name, directory, value):
-        run_gluster([ 'volume', 'quota', name, 'limit-usage', directory, value ])
+    run_gluster([ 'volume', 'quota', name, 'limit-usage', directory, value ])
 
 
 def main():
     ### MAIN ###
 
+    global module
     module = AnsibleModule(
         argument_spec=dict(
             name=dict(required=True, default=None, aliases=['volume']),
@@ -305,8 +383,10 @@ def main():
             host=dict(required=False, default=None),
             stripes=dict(required=False, default=None, type='int'),
             replicas=dict(required=False, default=None, type='int'),
+            disperses=dict(required=False, default=None, type='int'),
+            redundancies=dict(required=False, default=None, type='int'),
             transport=dict(required=False, default='tcp', choices=[ 'tcp', 'rdma', 'tcp,rdma' ]),
-            brick=dict(required=False, default=None),
+            bricks=dict(required=False, default=None, aliases=['brick']),
             start_on_create=dict(required=False, default=True, type='bool'),
             rebalance=dict(required=False, default=False, type='bool'),
             options=dict(required=False, default={}, type='dict'),
@@ -324,9 +404,11 @@ def main():
     action = module.params['state']
     volume_name = module.params['name']
     cluster= module.params['cluster']
-    brick_path = module.params['brick']
+    brick_paths = module.params['bricks']
     stripes = module.params['stripes']
     replicas = module.params['replicas']
+    disperses = module.params['disperses']
+    redundancies = module.params['redundancies']
     transport = module.params['transport']
     myhostname = module.params['host']
     start_on_create = module.boolean(module.params['start_on_create'])
@@ -335,6 +417,19 @@ def main():
 
     if not myhostname:
         myhostname = socket.gethostname()
+
+    # Clean up if last element is empty. Consider that yml can look like this:
+    #   cluster="{% for host in groups['glusterfs'] %}{{ hostvars[host]['private_ip'] }},{% endfor %}"
+    if cluster != None and len(cluster) > 1 and cluster[-1] == '':
+        cluster = cluster[0:-1]
+
+    if cluster == None or cluster[0] == '':
+        cluster = [myhostname]
+
+    if brick_paths != None and "," in brick_paths:
+        brick_paths = brick_paths.split(",")
+    else:
+        brick_paths = [brick_paths]
 
     options = module.params['options']
     quota = module.params['quota']
@@ -351,7 +446,9 @@ def main():
     # do the work!
     if action == 'absent':
         if volume_name in volumes:
-            run_gluster([ 'volume', 'delete', name ])
+            if volumes[volume_name]['status'].lower() != 'stopped':
+                stop_volume(volume_name)
+            run_gluster_yes([ 'volume', 'delete', volume_name ])
             changed = True
 
     if action == 'present':
@@ -359,7 +456,7 @@ def main():
 
         # create if it doesn't exist
         if volume_name not in volumes:
-            create_volume(volume_name, stripes, replicas, transport, cluster, brick_path, force)
+            create_volume(volume_name, stripes, replicas, disperses, redundancies, transport, cluster, brick_paths, force)
             volumes = get_volumes()
             changed = True
 
@@ -373,18 +470,19 @@ def main():
             removed_bricks = []
             all_bricks = []
             for node in cluster:
-                brick = '%s:%s' % (node, brick_path)
-                all_bricks.append(brick)
-                if brick not in volumes[volume_name]['bricks']:
-                    new_bricks.append(brick)
+                for brick_path in brick_paths:
+                    brick = '%s:%s' % (node, brick_path)
+                    all_bricks.append(brick)
+                    if brick not in volumes[volume_name]['bricks']:
+                        new_bricks.append(brick)
 
             # this module does not yet remove bricks, but we check those anyways
             for brick in volumes[volume_name]['bricks']:
                 if brick not in all_bricks:
                     removed_bricks.append(brick)
 
-            for brick in new_bricks:
-                add_brick(volume_name, brick, force)
+            if new_bricks:
+                add_bricks(volume_name, new_bricks, stripes, replicas, force)
                 changed = True
 
             # handle quotas
@@ -405,7 +503,7 @@ def main():
         else:
             module.fail_json(msg='failed to create volume %s' % volume_name)
 
-    if volume_name not in volumes:
+    if action != 'delete' and volume_name not in volumes:
         module.fail_json(msg='volume not found %s' % volume_name)
 
     if action == 'started':
@@ -428,6 +526,5 @@ def main():
 
     module.exit_json(changed=changed, ansible_facts=facts)
 
-# import module snippets
-from ansible.module_utils.basic import *
-main()
+if __name__ == '__main__':
+    main()

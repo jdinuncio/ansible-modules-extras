@@ -3,7 +3,8 @@
 
 """
 Ansible module to manage A10 Networks slb server objects
-(c) 2014, Mischa Peters <mpeters@a10networks.com>
+(c) 2014, Mischa Peters <mpeters@a10networks.com>,
+2016, Eric Chou <ericc@a10networks.com>
 
 This file is part of Ansible
 
@@ -21,57 +22,44 @@ You should have received a copy of the GNU General Public License
 along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: a10_server
 version_added: 1.8
-short_description: Manage A10 Networks AX/SoftAX/Thunder/vThunder devices
+short_description: Manage A10 Networks AX/SoftAX/Thunder/vThunder devices' server object.
 description:
-    - Manage slb server objects on A10 Networks devices via aXAPI
-author: Mischa Peters
+    - Manage SLB (Server Load Balancer) server objects on A10 Networks devices via aXAPIv2.
+author: "Eric Chou (@ericchou) 2016, Mischa Peters (@mischapeters) 2014"
 notes:
-    - Requires A10 Networks aXAPI 2.1
+    - Requires A10 Networks aXAPI 2.1.
+extends_documentation_fragment: a10
 options:
-  host:
+  partition:
+    version_added: "2.3"
     description:
-      - hostname or ip of your A10 Networks device
-    required: true
+      - set active-partition
+    required: false
     default: null
-    aliases: []
-    choices: []
-  username:
-    description:
-      - admin account of your A10 Networks device
-    required: true
-    default: null
-    aliases: ['user', 'admin']
-    choices: []
-  password:
-    description:
-      - admin password of your A10 Networks device
-    required: true
-    default: null
-    aliases: ['pass', 'pwd']
-    choices: []
   server_name:
     description:
-      - slb server name
+      - The SLB (Server Load Balancer) server name.
     required: true
-    default: null
     aliases: ['server']
-    choices: []
   server_ip:
     description:
-      - slb server IP address
+      - The SLB server IPv4 address.
     required: false
     default: null
     aliases: ['ip', 'address']
-    choices: []
   server_status:
     description:
-      - slb virtual server status
+      - The SLB virtual server status.
     required: false
-    default: enable
+    default: enabled
     aliases: ['status']
     choices: ['enabled', 'disabled']
   server_ports:
@@ -82,15 +70,25 @@ options:
         required when C(state) is C(present).
     required: false
     default: null
-    aliases: []
-    choices: []
   state:
     description:
-      - create, update or remove slb server
+      - This is to specify the operation to create, update or remove SLB server.
     required: false
     default: present
-    aliases: []
     choices: ['present', 'absent']
+  validate_certs:
+    description:
+      - If C(no), SSL certificates will not be validated. This should only be used
+        on personally controlled devices using self-signed certificates.
+    required: false
+    version_added: 2.3
+    default: 'yes'
+    choices: ['yes', 'no']
+
+'''
+
+RETURN = '''
+#
 '''
 
 EXAMPLES = '''
@@ -99,6 +97,7 @@ EXAMPLES = '''
     host: a10.mydomain.com
     username: myadmin
     password: mypassword
+    partition: mypartition
     server: test
     server_ip: 1.1.1.100
     server_ports:
@@ -108,6 +107,15 @@ EXAMPLES = '''
         protocol: TCP
 
 '''
+
+RETURN = '''
+content:
+  description: the full info regarding the slb_server
+  returned: success
+  type: string
+  sample: "mynewserver"
+'''
+
 
 VALID_PORT_FIELDS = ['port_num', 'protocol', 'status']
 
@@ -154,6 +162,7 @@ def main():
             server_ip=dict(type='str', aliases=['ip', 'address']),
             server_status=dict(type='str', default='enabled', aliases=['status'], choices=['enabled', 'disabled']),
             server_ports=dict(type='list', aliases=['port'], default=[]),
+            partition=dict(type='str', default=[]),
         )
     )
 
@@ -163,6 +172,7 @@ def main():
     )
 
     host = module.params['host']
+    partition = module.params['partition']
     username = module.params['username']
     password = module.params['password']
     state = module.params['state']
@@ -183,28 +193,37 @@ def main():
 
     json_post = {
         'server': {
-            'name': slb_server, 
-            'host': slb_server_ip, 
-            'status': axapi_enabled_disabled(slb_server_status),
-            'port_list': slb_server_ports,
+            'name': slb_server,
         }
     }
+
+    # add optional module parameters
+    if slb_server_ip:
+        json_post['server']['host'] = slb_server_ip
+
+    if slb_server_ports:
+        json_post['server']['port_list'] = slb_server_ports
+
+    if slb_server_status:
+        json_post['server']['status'] = axapi_enabled_disabled(slb_server_status)
+
+    slb_server_partition = axapi_call(module, session_url + '&method=system.partition.active', json.dumps({'name': partition}))
 
     slb_server_data = axapi_call(module, session_url + '&method=slb.server.search', json.dumps({'name': slb_server}))
     slb_server_exists = not axapi_failure(slb_server_data)
 
     changed = False
     if state == 'present':
-        if not slb_server_ip:
-            module.fail_json(msg='you must specify an IP address when creating a server')
-
         if not slb_server_exists:
+            if not slb_server_ip:
+                module.fail_json(msg='you must specify an IP address when creating a server')
+
             result = axapi_call(module, session_url + '&method=slb.server.create', json.dumps(json_post))
             if axapi_failure(result):
                 module.fail_json(msg="failed to create the server: %s" % result['response']['err']['msg'])
             changed = True
         else:
-            def needs_update(src_ports, dst_ports):
+            def port_needs_update(src_ports, dst_ports):
                 '''
                 Checks to determine if the port definitions of the src_ports
                 array are in or different from those in dst_ports. If there is
@@ -227,12 +246,24 @@ def main():
                 # every port from the src exists in the dst, and none of them were different
                 return False
 
-            defined_ports = slb_server_data.get('server', {}).get('port_list', [])
+            def status_needs_update(current_status, new_status):
+                '''
+                Check to determine if we want to change the status of a server.
+                If there is a difference between the current status of the server and
+                the desired status, return true, otherwise false.
+                '''
+                if current_status != new_status:
+                    return True
+                return False
 
-            # we check for a needed update both ways, in case ports
-            # are missing from either the ones specified by the user
-            # or from those on the device
-            if needs_update(defined_ports, slb_server_ports) or needs_update(slb_server_ports, defined_ports):
+            defined_ports = slb_server_data.get('server', {}).get('port_list', [])
+            current_status = slb_server_data.get('server', {}).get('status')
+
+            # we check for a needed update several ways
+            # - in case ports are missing from the ones specified by the user
+            # - in case ports are missing from those on the device
+            # - in case we are change the status of a server
+            if port_needs_update(defined_ports, slb_server_ports) or port_needs_update(slb_server_ports, defined_ports) or status_needs_update(current_status, axapi_enabled_disabled(slb_server_status)):
                 result = axapi_call(module, session_url + '&method=slb.server.update', json.dumps(json_post))
                 if axapi_failure(result):
                     module.fail_json(msg="failed to update the server: %s" % result['response']['err']['msg'])
@@ -249,7 +280,7 @@ def main():
             result = axapi_call(module, session_url + '&method=slb.server.delete', json.dumps({'name': slb_server}))
             changed = True
         else:
-            result = dict(msg="the  server was not present")
+            result = dict(msg="the server was not present")
 
     # if the config has changed, save the config unless otherwise requested
     if changed and write_config:
@@ -261,9 +292,12 @@ def main():
     axapi_call(module, session_url + '&method=session.close')
     module.exit_json(changed=changed, content=result)
 
-# standard ansible module imports
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-from ansible.module_utils.a10 import *
+# ansible module imports
+import json
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.urls import url_argument_spec
+from ansible.module_utils.a10 import axapi_call, a10_argument_spec, axapi_authenticate, axapi_failure, axapi_get_port_protocol, axapi_enabled_disabled
 
-main()
+
+if __name__ == '__main__':
+    main()

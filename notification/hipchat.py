@@ -1,11 +1,29 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
 module: hipchat
 version_added: "1.2"
-short_description: Send a message to hipchat
+short_description: Send a message to hipchat.
 description:
    - Send a message to hipchat
 options:
@@ -56,30 +74,54 @@ options:
     version_added: 1.5.1
   api:
     description:
-      - API url if using a self-hosted hipchat server
+      - API url if using a self-hosted hipchat server. For hipchat api version 2 use C(/v2) path in URI
     required: false
-    default: 'https://api.hipchat.com/v1/rooms/message'
+    default: 'https://api.hipchat.com/v1'
     version_added: 1.6.0
 
 
-# informational: requirements for nodes
-requirements: [ urllib, urllib2 ]
-author: WAKAYAMA Shirou
+requirements: [ ]
+author: "WAKAYAMA Shirou (@shirou), BOURDEL Paul (@pb8226)"
 '''
 
 EXAMPLES = '''
-- hipchat: token=AAAAAA room=notify msg="Ansible task finished"
+- hipchat:
+    room: notif
+    msg: Ansible task finished
+
+# Use Hipchat API version 2
+- hipchat:
+    api: 'https://api.hipchat.com/v2/'
+    token: OAUTH2_TOKEN
+    room: notify
+    msg: Ansible task finished
 '''
 
 # ===========================================
 # HipChat module specific support methods.
 #
 
-MSG_URI = "https://api.hipchat.com/v1/rooms/message"
+import urllib
+try:
+    import json
+except ImportError:
+    import simplejson as json
 
-def send_msg(module, token, room, msg_from, msg, msg_format='text',
-             color='yellow', notify=False, api=MSG_URI):
-    '''sending message to hipchat'''
+# import module snippets
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.pycompat24 import get_exception
+from ansible.module_utils.urls import fetch_url
+
+DEFAULT_URI = "https://api.hipchat.com/v1"
+
+MSG_URI_V1 = "/rooms/message"
+
+NOTIFY_URI_V2 = "/room/{id_or_name}/notification"
+
+
+def send_msg_v1(module, token, room, msg_from, msg, msg_format='text',
+                color='yellow', notify=False, api=MSG_URI_V1):
+    '''sending message to hipchat v1 server'''
 
     params = {}
     params['room_id'] = room
@@ -88,16 +130,48 @@ def send_msg(module, token, room, msg_from, msg, msg_format='text',
     params['message_format'] = msg_format
     params['color'] = color
     params['api'] = api
+    params['notify'] = int(notify)
 
-    if notify:
-        params['notify'] = 1
-    else:
-        params['notify'] = 0
-
-    url = api + "?auth_token=%s" % (token)
+    url = api + MSG_URI_V1 + "?auth_token=%s" % (token)
     data = urllib.urlencode(params)
+
+    if module.check_mode:
+        # In check mode, exit before actually sending the message
+        module.exit_json(changed=False)
+
     response, info = fetch_url(module, url, data=data)
     if info['status'] == 200:
+        return response.read()
+    else:
+        module.fail_json(msg="failed to send message, return status=%s" % str(info['status']))
+
+
+def send_msg_v2(module, token, room, msg_from, msg, msg_format='text',
+                color='yellow', notify=False, api=NOTIFY_URI_V2):
+    '''sending message to hipchat v2 server'''
+
+    headers = {'Authorization': 'Bearer %s' % token, 'Content-Type': 'application/json'}
+
+    body = dict()
+    body['message'] = msg
+    body['color'] = color
+    body['message_format'] = msg_format
+    body['notify'] = notify
+
+    POST_URL = api + NOTIFY_URI_V2
+
+    url = POST_URL.replace('{id_or_name}', urllib.pathname2url(room))
+    data = json.dumps(body)
+
+    if module.check_mode:
+        # In check mode, exit before actually sending the message
+        module.exit_json(changed=False)
+
+    response, info = fetch_url(module, url, data=data, headers=headers, method='POST')
+
+    # https://www.hipchat.com/docs/apiv2/method/send_room_notification shows
+    # 204 to be the expected result code.
+    if info['status'] in [200, 204]:
         return response.read()
     else:
         module.fail_json(msg="failed to send message, return status=%s" % str(info['status']))
@@ -111,7 +185,7 @@ def main():
 
     module = AnsibleModule(
         argument_spec=dict(
-            token=dict(required=True),
+            token=dict(required=True, no_log=True),
             room=dict(required=True),
             msg=dict(required=True),
             msg_from=dict(default="Ansible", aliases=['from']),
@@ -119,14 +193,14 @@ def main():
                                                   "purple", "gray", "random"]),
             msg_format=dict(default="text", choices=["text", "html"]),
             notify=dict(default=True, type='bool'),
-            validate_certs = dict(default='yes', type='bool'),
-            api = dict(default=MSG_URI),
+            validate_certs=dict(default='yes', type='bool'),
+            api=dict(default=DEFAULT_URI),
         ),
         supports_check_mode=True
     )
 
     token = module.params["token"]
-    room = module.params["room"]
+    room = str(module.params["room"])
     msg = module.params["msg"]
     msg_from = module.params["msg_from"]
     color = module.params["color"]
@@ -135,15 +209,16 @@ def main():
     api = module.params["api"]
 
     try:
-        send_msg(module, token, room, msg_from, msg, msg_format, color, notify, api)
-    except Exception, e:
+        if api.find('/v2') != -1:
+            send_msg_v2(module, token, room, msg_from, msg, msg_format, color, notify, api)
+        else:
+            send_msg_v1(module, token, room, msg_from, msg, msg_format, color, notify, api)
+    except Exception:
+        e = get_exception()
         module.fail_json(msg="unable to send msg: %s" % e)
 
     changed = True
     module.exit_json(changed=changed, room=room, msg_from=msg_from, msg=msg)
 
-# import module snippets
-from ansible.module_utils.basic import *
-from ansible.module_utils.urls import *
-
-main()
+if __name__ == '__main__':
+    main()

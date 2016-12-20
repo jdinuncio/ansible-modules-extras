@@ -18,6 +18,11 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
+import time
+
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -38,18 +43,29 @@ options:
     required: true
     default: null
     choices: [ "present", "started", "stopped", "restarted", "monitored", "unmonitored", "reloaded" ]
+  timeout:
+    description:
+      - If there are pending actions for the service monitored by monit, then Ansible will check
+        for up to this many seconds to verify the the requested action has been performed.
+        Ansible will sleep for five seconds between each check.
+    required: false
+    default: 300
+    version_added: "2.1"
 requirements: [ ]
-author: Darryl Stoflet
+author: "Darryl Stoflet (@dstoflet)" 
 '''
 
 EXAMPLES = '''
 # Manage the state of program "httpd" to be in "started" state.
-- monit: name=httpd state=started
+- monit:
+    name: httpd
+    state: started
 '''
 
 def main():
     arg_spec = dict(
         name=dict(required=True),
+        timeout=dict(default=300, type='int'),
         state=dict(required=True, choices=['present', 'started', 'restarted', 'stopped', 'monitored', 'unmonitored', 'reloaded'])
     )
 
@@ -57,17 +73,10 @@ def main():
 
     name = module.params['name']
     state = module.params['state']
+    timeout = module.params['timeout']
 
     MONIT = module.get_bin_path('monit', True)
 
-    if state == 'reloaded':
-        if module.check_mode:
-            module.exit_json(changed=True)
-        rc, out, err = module.run_command('%s reload' % MONIT)
-        if rc != 0:
-            module.fail_json(msg='monit reload failed', stdout=out, stderr=err)
-        module.exit_json(changed=True, name=name, state=state)
-    
     def status():
         """Return the status of the process in monit, or the empty string if not present."""
         rc, out, err = module.run_command('%s summary' % MONIT, check_rc=True)
@@ -77,7 +86,7 @@ def main():
             # Process 'name'    Running - restart pending
             parts = line.split()
             if len(parts) > 2 and parts[0].lower() == 'process' and parts[1] == "'%s'" % name:
-                return ' '.join(parts[2:])
+                return ' '.join(parts[2:]).lower()
         else:
             return ''
 
@@ -85,6 +94,33 @@ def main():
         """Runs a monit command, and returns the new status."""
         module.run_command('%s %s %s' % (MONIT, command, name), check_rc=True)
         return status()
+
+    def wait_for_monit_to_stop_pending():
+        """Fails this run if there is no status or it's pending/initalizing for timeout"""
+        timeout_time = time.time() + timeout
+        sleep_time = 5
+
+        running_status = status()
+        while running_status == '' or 'pending' in running_status or 'initializing' in running_status:
+            if time.time() >= timeout_time:
+                module.fail_json(
+                    msg='waited too long for "pending", or "initiating" status to go away ({0})'.format(
+                        running_status
+                    ),
+                    state=state
+                )
+
+            time.sleep(sleep_time)
+            running_status = status()
+
+    if state == 'reloaded':
+        if module.check_mode:
+            module.exit_json(changed=True)
+        rc, out, err = module.run_command('%s reload' % MONIT)
+        if rc != 0:
+            module.fail_json(msg='monit reload failed', stdout=out, stderr=err)
+        wait_for_monit_to_stop_pending()
+        module.exit_json(changed=True, name=name, state=state)
 
     present = status() != ''
 
@@ -97,11 +133,11 @@ def main():
                 module.exit_json(changed=True)
             status = run_command('reload')
             if status == '':
-                module.fail_json(msg='%s process not configured with monit' % name, name=name, state=state)
-            else:
-                module.exit_json(changed=True, name=name, state=state)
+                wait_for_monit_to_stop_pending()
+            module.exit_json(changed=True, name=name, state=state)
         module.exit_json(changed=False, name=name, state=state)
 
+    wait_for_monit_to_stop_pending()
     running = 'running' in status()
 
     if running and state in ['started', 'monitored']:
@@ -119,7 +155,7 @@ def main():
         if module.check_mode:
             module.exit_json(changed=True)
         status = run_command('unmonitor')
-        if status in ['not monitored']:
+        if status in ['not monitored'] or 'unmonitor pending' in status:
             module.exit_json(changed=True, name=name, state=state)
         module.fail_json(msg='%s process not unmonitored' % name, status=status)
 
@@ -152,4 +188,5 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 
-main()
+if __name__ == '__main__':
+    main()

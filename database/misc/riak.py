@@ -18,6 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: riak
@@ -26,6 +30,9 @@ description:
      - This module can be used to join nodes to a cluster, check
        the status of the cluster.
 version_added: "1.2"
+author:
+    - "James Martin (@jsmartin)"
+    - "Drew Kerrigan (@drewkerrigan)"
 options:
   command:
     description:
@@ -85,23 +92,31 @@ options:
 
 EXAMPLES = '''
 # Join's a Riak node to another node
-- riak: command=join target_node=riak@10.1.1.1
+- riak:
+    command: join
+    target_node: riak@10.1.1.1
 
 # Wait for handoffs to finish.  Use with async and poll.
-- riak: wait_for_handoffs=yes
+- riak:
+    wait_for_handoffs: yes
 
 # Wait for riak_kv service to startup
-- riak: wait_for_service=kv
+- riak:
+    wait_for_service: kv
 '''
 
-import urllib2
 import time
 import socket
 import sys
+
 try:
     import json
 except ImportError:
-    import simplejson as json
+    try:
+        import simplejson as json
+    except ImportError:
+        # Let snippet from module_utils/basic.py return a proper error in this case
+        pass
 
 
 def ring_check(module, riak_admin_bin):
@@ -118,7 +133,7 @@ def main():
         argument_spec=dict(
         command=dict(required=False, default=None, choices=[
                     'ping', 'kv_test', 'join', 'plan', 'commit']),
-        config_dir=dict(default='/etc/riak'),
+        config_dir=dict(default='/etc/riak', type='path'),
         http_conn=dict(required=False, default='127.0.0.1:8098'),
         target_node=dict(default='riak@127.0.0.1', required=False),
         wait_for_handoffs=dict(default=False, type='int'),
@@ -251,5 +266,5 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
-
-main()
+if __name__ == '__main__':
+    main()

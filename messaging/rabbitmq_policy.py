@@ -19,6 +19,10 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: rabbitmq_policy
@@ -26,7 +30,7 @@ short_description: Manage the state of policies in RabbitMQ.
 description:
   - Manage the state of a virtual host in RabbitMQ.
 version_added: "1.5"
-author: John Dewey
+author: "John Dewey (@retr0h)"
 options:
   name:
     description:
@@ -38,6 +42,13 @@ options:
       - The name of the vhost to apply to.
     required: false
     default: /
+  apply_to:
+    description:
+      - What the policy applies to. Requires RabbitMQ 3.2.0 or later.
+    required: false
+    default: all
+    choices: [all, exchanges, queues]
+    version_added: "2.1"
   pattern:
     description:
       - A regex of queues to apply the policy to.
@@ -67,13 +78,19 @@ options:
 
 EXAMPLES = '''
 - name: ensure the default vhost contains the HA policy via a dict
-  rabbitmq_policy: name=HA pattern='.*'
+  rabbitmq_policy:
+    name: HA
+    pattern: .*
   args:
     tags:
-      "ha-mode": all
+      ha-mode: all
 
 - name: ensure the default vhost contains the HA policy
-  rabbitmq_policy: name=HA pattern='.*' tags="ha-mode=all"
+  rabbitmq_policy:
+    name: HA
+    pattern: .*
+    tags:
+      - ha-mode: all
 '''
 class RabbitMqPolicy(object):
     def __init__(self, module, name):
@@ -81,6 +98,7 @@ class RabbitMqPolicy(object):
         self._name = name
         self._vhost = module.params['vhost']
         self._pattern = module.params['pattern']
+        self._apply_to = module.params['apply_to']
         self._tags = module.params['tags']
         self._priority = module.params['priority']
         self._node = module.params['node']
@@ -112,6 +130,9 @@ class RabbitMqPolicy(object):
         args.append(json.dumps(self._tags))
         args.append('--priority')
         args.append(self._priority)
+        if (self._apply_to != 'all'):
+            args.append('--apply-to')
+            args.append(self._apply_to)
         return self._exec(args)
 
     def clear(self):
@@ -123,6 +144,7 @@ def main():
         name=dict(required=True),
         vhost=dict(default='/'),
         pattern=dict(required=True),
+        apply_to=dict(default='all', choices=['all', 'exchanges', 'queues']),
         tags=dict(type='dict', required=True),
         priority=dict(default='0'),
         node=dict(default='rabbit'),
@@ -153,4 +175,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

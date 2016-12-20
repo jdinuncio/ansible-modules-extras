@@ -18,11 +18,15 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: flowdock
 version_added: "1.2"
-author: Matt Coddington
+author: "Matt Coddington (@mcodd)" 
 short_description: Send a message to a flowdock
 description:
    - Send a message to a flowdock team inbox or chat using the push API (see https://www.flowdock.com/api/team-inbox and https://www.flowdock.com/api/chat)
@@ -85,24 +89,27 @@ options:
     choices: ['yes', 'no']
     version_added: 1.5.1
 
-# informational: requirements for nodes
-requirements: [ urllib, urllib2 ]
+requirements: [ ]
 '''
 
 EXAMPLES = '''
-- flowdock: type=inbox
-            token=AAAAAA
-            from_address=user@example.com
-            source='my cool app'
-            msg='test from ansible'
-            subject='test subject'
+- flowdock:
+    type: inbox
+    token: AAAAAA
+    from_address: user@example.com
+    source: my cool app
+    msg: test from ansible
+    subject: test subject
 
-- flowdock: type=chat
-            token=AAAAAA
-            external_user_name=testuser
-            msg='test from ansible'
-            tags=tag1,tag2,tag3
+- flowdock:
+    type: chat
+    token: AAAAAA
+    external_user_name: testuser
+    msg: test from ansible
+    tags: tag1,tag2,tag3
 '''
+
+import urllib
 
 # ===========================================
 # Module execution.
@@ -112,7 +119,7 @@ def main():
 
     module = AnsibleModule(
         argument_spec=dict(
-            token=dict(required=True),
+            token=dict(required=True, no_log=True),
             msg=dict(required=True),
             type=dict(required=True, choices=["inbox","chat"]),
             external_user_name=dict(required=False),
@@ -188,5 +195,5 @@ def main():
 from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 
-main()
-
+if __name__ == '__main__':
+    main()

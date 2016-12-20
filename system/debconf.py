@@ -21,6 +21,10 @@ You should have received a copy of the GNU General Public License
 along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'core',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: debconf
@@ -51,11 +55,11 @@ options:
     aliases: ['setting', 'selection']
   vtype:
     description:
-      - The type of the value supplied
+      - The type of the value supplied.
+      - C(seen) was added in 2.2.
     required: false
     default: null
-    choices: [string, password, boolean, select, multiselect, note, error, title, text]
-    aliases: []
+    choices: [string, password, boolean, select, multiselect, note, error, title, text, seen]
   value:
     description:
       -  Value to set the configuration to
@@ -67,23 +71,35 @@ options:
       - Do not set 'seen' flag when pre-seeding
     required: false
     default: False
-    aliases: []
-author: Brian Coca
+author: "Brian Coca (@bcoca)"
 
 '''
 
 EXAMPLES = '''
 # Set default locale to fr_FR.UTF-8
-debconf: name=locales question='locales/default_environment_locale' value=fr_FR.UTF-8 vtype='select'
+- debconf:
+    name: locales
+    question: locales/default_environment_locale
+    value: fr_FR.UTF-8
+    vtype: select
 
 # set to generate locales:
-debconf: name=locales question='locales/locales_to_be_generated'  value='en_US.UTF-8 UTF-8, fr_FR.UTF-8 UTF-8' vtype='multiselect'
+- debconf:
+    name: locales
+    question: locales/locales_to_be_generated
+    value: en_US.UTF-8 UTF-8, fr_FR.UTF-8 UTF-8
+    vtype: multiselect
 
 # Accept oracle license
-debconf: name='oracle-java7-installer' question='shared/accepted-oracle-license-v1-1' value='true' vtype='select'
+- debconf:
+    name: oracle-java7-installer
+    question: shared/accepted-oracle-license-v1-1
+    value: true
+    vtype: select
 
 # Specifying package you can register/return the list of questions and current values
-debconf: name='tzdata'
+- debconf:
+    name: tzdata
 '''
 
 def get_selections(module, pkg):
@@ -109,6 +125,11 @@ def set_selection(module, pkg, question, vtype, value, unseen):
     if unseen:
         cmd.append('-u')
 
+    if vtype == 'boolean':
+        if value == 'True':
+            value = 'true'
+        elif value == 'False':
+            value = 'false'
     data = ' '.join([pkg, question, vtype, value])
 
     return module.run_command(cmd, data=data)
@@ -119,8 +140,8 @@ def main():
         argument_spec = dict(
            name = dict(required=True, aliases=['pkg'], type='str'),
            question = dict(required=False, aliases=['setting', 'selection'], type='str'),
-           vtype = dict(required=False, type='str', choices=['string', 'password', 'boolean', 'select',  'multiselect', 'note', 'error', 'title', 'text']),
-           value= dict(required=False, type='str'),
+           vtype = dict(required=False, type='str', choices=['string', 'password', 'boolean', 'select',  'multiselect', 'note', 'error', 'title', 'text', 'seen']),
+           value = dict(required=False, type='str', aliases=['answer']),
            unseen = dict(required=False, type='bool'),
         ),
         required_together = ( ['question','vtype', 'value'],),
@@ -157,12 +178,19 @@ def main():
             prev = {question: prev[question]}
         else:
             prev[question] = ''
+        if module._diff:
+            after = prev.copy()
+            after.update(curr)
+            diff_dict = {'before': prev, 'after': after}
+        else:
+            diff_dict = {}
 
-        module.exit_json(changed=changed, msg=msg, current=curr, previous=prev)
+        module.exit_json(changed=changed, msg=msg, current=curr, previous=prev, diff=diff_dict)
 
     module.exit_json(changed=changed, msg=msg, current=prev)
 
 # import module snippets
 from ansible.module_utils.basic import *
 
-main()
+if __name__ == '__main__':
+    main()

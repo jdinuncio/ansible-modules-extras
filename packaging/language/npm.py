@@ -18,6 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: npm
@@ -25,7 +29,7 @@ short_description: Manage node.js packages with npm
 description:
   - Manage node.js packages with Node Package Manager (npm)
 version_added: 1.2
-author: Chris Hoffman
+author: "Chris Hoffman (@chrishoffman)"
 options:
   name:
     description:
@@ -78,28 +82,46 @@ options:
 
 EXAMPLES = '''
 description: Install "coffee-script" node.js package.
-- npm: name=coffee-script path=/app/location
+- npm:
+    name: coffee-script
+    path: /app/location
 
 description: Install "coffee-script" node.js package on version 1.6.1.
-- npm: name=coffee-script version=1.6.1 path=/app/location
+- npm:
+    name: coffee-script
+    version: '1.6.1'
+    path: /app/location
 
 description: Install "coffee-script" node.js package globally.
-- npm: name=coffee-script global=yes
+- npm:
+    name: coffee-script
+    global: yes
 
 description: Remove the globally package "coffee-script".
-- npm: name=coffee-script global=yes state=absent
+- npm:
+    name: coffee-script
+    global: yes
+    state: absent
 
 description: Install "coffee-script" node.js package from custom registry.
-- npm: name=coffee-script registry=http://registry.mysite.com
+- npm:
+    name: coffee-script
+    registry: 'http://registry.mysite.com'
 
 description: Install packages based on package.json.
-- npm: path=/app/location
+- npm:
+    path: /app/location
 
 description: Update packages based on package.json to their latest version.
-- npm: path=/app/location state=latest
+- npm:
+    path: /app/location
+    state: latest
 
 description: Install packages based on package.json using the npm installed with nvm v0.10.1.
-- npm: path=/app/location executable=/opt/nvm/v0.10.1/bin/npm state=present
+- npm:
+    path: /app/location
+    executable: /opt/nvm/v0.10.1/bin/npm
+    state: present
 '''
 
 import os
@@ -107,7 +129,12 @@ import os
 try:
     import json
 except ImportError:
-    import simplejson as json
+    try:
+        import simplejson as json
+    except ImportError:
+        # Let snippet from module_utils/basic.py return a proper error in this case
+        pass
+
 
 class Npm(object):
     def __init__(self, module, **kwargs):
@@ -126,7 +153,7 @@ class Npm(object):
             self.executable = [module.get_bin_path('npm', True)]
 
         if kwargs['version']:
-            self.name_version = self.name + '@' + self.version
+            self.name_version = self.name + '@' + str(self.version)
         else:
             self.name_version = self.name
 
@@ -149,7 +176,6 @@ class Npm(object):
             #If path is specified, cd into that path and run the command.
             cwd = None
             if self.path:
-                self.path = os.path.abspath(os.path.expanduser(self.path))
                 if not os.path.exists(self.path):
                     os.makedirs(self.path)
                 if not os.path.isdir(self.path):
@@ -207,10 +233,10 @@ class Npm(object):
 def main():
     arg_spec = dict(
         name=dict(default=None),
-        path=dict(default=None),
+        path=dict(default=None, type='path'),
         version=dict(default=None),
         production=dict(default='no', type='bool'),
-        executable=dict(default=None),
+        executable=dict(default=None, type='path'),
         registry=dict(default=None),
         state=dict(default='present', choices=['present', 'absent', 'latest']),
         ignore_scripts=dict(default=False, type='bool'),
@@ -248,9 +274,12 @@ def main():
     elif state == 'latest':
         installed, missing = npm.list()
         outdated = npm.list_outdated()
-        if len(missing) or len(outdated):
+        if len(missing):
             changed = True
             npm.install()
+        if len(outdated):
+            changed = True
+            npm.update()
     else: #absent
         installed, missing = npm.list()
         if name in installed:
@@ -261,4 +290,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

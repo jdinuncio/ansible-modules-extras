@@ -21,6 +21,10 @@
 import re
 import pipes
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: swdepot
@@ -29,7 +33,7 @@ description:
     - Will install, upgrade and remove packages with swdepot package manager (HP-UX)
 version_added: "1.4"
 notes: []
-author: Raul Melo
+author: "Raul Melo (@melodous)"
 options:
     name:
         description:
@@ -58,9 +62,19 @@ options:
 '''
 
 EXAMPLES = '''
-- swdepot: name=unzip-6.0 state=installed depot=repository:/path
-- swdepot: name=unzip state=latest depot=repository:/path
-- swdepot: name=unzip state=absent
+- swdepot:
+    name: unzip-6.0
+    state: installed
+    depot: 'repository:/path'
+
+- swdepot:
+    name: unzip
+    state: latest
+    depot: 'repository:/path'
+
+- swdepot:
+    name: unzip
+    state: absent
 '''
 
 def compare_package(version1, version2):
@@ -147,7 +161,7 @@ def main():
 
         if not rc:
             changed = True
-            msg = "Packaged installed"
+            msg = "Package installed"
 
         else:
             module.fail_json(name=name, msg=output, rc=rc)
@@ -192,5 +206,5 @@ def main():
 # import module snippets
 from ansible.module_utils.basic import *
 
-main()
-
+if __name__ == '__main__':
+    main()

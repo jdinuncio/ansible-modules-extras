@@ -19,6 +19,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: mongodb_user
@@ -47,6 +51,12 @@ options:
             - The port to connect to
         required: false
         default: 27017
+    login_database:
+        version_added: "2.0"
+        description:
+            - The database where login credentials are stored
+        required: false
+        default: null
     replica_set:
         version_added: "1.6"
         description:
@@ -73,11 +83,19 @@ options:
         description:
             - Whether to use an SSL connection when connecting to the database
         default: False
+    ssl_cert_reqs:
+        version_added: "2.2"
+        description:
+            - Specifies whether a certificate is required from the other side of the connection, and whether it will be validated if provided.
+        required: false
+        default: "CERT_REQUIRED"
+        choices: ["CERT_REQUIRED", "CERT_OPTIONAL", "CERT_NONE"]
     roles:
         version_added: "1.3"
         description:
-            - "The database user roles valid values are one or more of the following: read, 'readWrite', 'dbAdmin', 'userAdmin', 'clusterAdmin', 'readAnyDatabase', 'readWriteAnyDatabase', 'userAdminAnyDatabase', 'dbAdminAnyDatabase'"
-            - This param requires mongodb 2.4+ and pymongo 2.5+
+            - "The database user roles valid values could either be one or more of the following strings: 'read', 'readWrite', 'dbAdmin', 'userAdmin', 'clusterAdmin', 'readAnyDatabase', 'readWriteAnyDatabase', 'userAdminAnyDatabase', 'dbAdminAnyDatabase'"
+            - "Or the following dictionary '{ db: DATABASE_NAME, role: ROLE_NAME }'."
+            - "This param requires pymongo 2.5+. If it is a string, mongodb 2.4+ is also required. If it is a dictionary, mongo 2.6+  is required."
         required: false
         default: "readWrite"
     state:
@@ -87,32 +105,91 @@ options:
         required: false
         default: present
         choices: [ "present", "absent" ]
+    update_password:
+        required: false
+        default: always
+        choices: ['always', 'on_create']
+        version_added: "2.1"
+        description:
+          - C(always) will update passwords if they differ.  C(on_create) will only set the password for newly created users.
+
 notes:
     - Requires the pymongo Python package on the remote host, version 2.4.2+. This
       can be installed using pip or the OS package manager. @see http://api.mongodb.org/python/current/installation.html
 requirements: [ "pymongo" ]
-author: Elliott Foster
+author: "Elliott Foster (@elliotttf)"
 '''
 
 EXAMPLES = '''
 # Create 'burgers' database user with name 'bob' and password '12345'.
-- mongodb_user: database=burgers name=bob password=12345 state=present
+- mongodb_user:
+    database: burgers
+    name: bob
+    password: 12345
+    state: present
 
 # Create a database user via SSL (MongoDB must be compiled with the SSL option and configured properly)
-- mongodb_user: database=burgers name=bob password=12345 state=present ssl=True
+- mongodb_user:
+    database: burgers
+    name: bob
+    password: 12345
+    state: present
+    ssl: True
 
 # Delete 'burgers' database user with name 'bob'.
-- mongodb_user: database=burgers name=bob state=absent
+- mongodb_user:
+    database: burgers
+    name: bob
+    state: absent
 
 # Define more users with various specific roles (if not defined, no roles is assigned, and the user will be added via pre mongo 2.2 style)
-- mongodb_user: database=burgers name=ben password=12345 roles='read' state=present
-- mongodb_user: database=burgers name=jim password=12345 roles='readWrite,dbAdmin,userAdmin' state=present
-- mongodb_user: database=burgers name=joe password=12345 roles='readWriteAnyDatabase' state=present
+- mongodb_user:
+    database: burgers
+    name: ben
+    password: 12345
+    roles: read
+    state: present
+- mongodb_user:
+    database: burgers
+    name: jim
+    password: 12345
+    roles: readWrite,dbAdmin,userAdmin
+    state: present
+- mongodb_user:
+    database: burgers
+    name: joe
+    password: 12345
+    roles: readWriteAnyDatabase
+    state: present
 
 # add a user to database in a replica set, the primary server is automatically discovered and written to
-- mongodb_user: database=burgers name=bob replica_set=blecher password=12345 roles='readWriteAnyDatabase' state=present
+- mongodb_user:
+    database: burgers
+    name: bob
+    replica_set: belcher
+    password: 12345
+    roles: readWriteAnyDatabase
+    state: present
+
+# add a user 'oplog_reader' with read only access to the 'local' database on the replica_set 'belcher'. This is usefull for oplog access (MONGO_OPLOG_URL).
+# please notice the credentials must be added to the 'admin' database because the 'local' database is not syncronized and can't receive user credentials
+# To login with such user, the connection string should be MONGO_OPLOG_URL="mongodb://oplog_reader:oplog_reader_password@server1,server2/local?authSource=admin"
+# This syntax requires mongodb 2.6+ and pymongo 2.5+
+- mongodb_user:
+    login_user: root
+    login_password: root_password
+    database: admin
+    user: oplog_reader
+    password: oplog_reader_password
+    state: present
+    replica_set: belcher
+    roles:
+      - db: local
+        role: read
+
 '''
 
+import ssl as ssl_lib
 import ConfigParser
 from distutils.version import LooseVersion
 try:
@@ -134,22 +211,72 @@ else:
 # MongoDB module specific support methods.
 #
 
+def check_compatibility(module, client):
+    """Check the compatibility between the driver and the database.
+
+       See: https://docs.mongodb.com/ecosystem/drivers/driver-compatibility-reference/#python-driver-compatibility
+
+    Args:
+        module: Ansible module.
+        client (cursor): Mongodb cursor on admin database.
+    """
+    loose_srv_version = LooseVersion(client.server_info()['version'])
+    loose_driver_version = LooseVersion(PyMongoVersion)
+
+    if loose_srv_version >= LooseVersion('3.2') and loose_driver_version < LooseVersion('3.2'):
+        module.fail_json(msg=' (Note: you must use pymongo 3.2+ with MongoDB >= 3.2)')
+
+    elif loose_srv_version >= LooseVersion('3.0') and loose_driver_version <= LooseVersion('2.8'):
+        module.fail_json(msg=' (Note: you must use pymongo 2.8+ with MongoDB 3.0)')
+
+    elif loose_srv_version >= LooseVersion('2.6') and loose_driver_version <= LooseVersion('2.7'):
+        module.fail_json(msg=' (Note: you must use pymongo 2.7+ with MongoDB 2.6)')
+
+    elif LooseVersion(PyMongoVersion) <= LooseVersion('2.5'):
+        module.fail_json(msg=' (Note: you must be on mongodb 2.4+ and pymongo 2.5+ to use the roles param)')
+
+
+def user_find(client, user, db_name):
+    """Check if the user exists.
+
+    Args:
+        client (cursor): Mongodb cursor on admin database.
+        user (str): User to check.
+        db_name (str): User's database.
+
+    Returns:
+        dict: when user exists, False otherwise.
+    """
+    for mongo_user in client["admin"].system.users.find():
+        if mongo_user['user'] == user:
+            # NOTE: there is no 'db' field in mongo 2.4.
+            if 'db' not in mongo_user:
+                return mongo_user
+
+            if mongo_user["db"] == db_name:
+                return mongo_user
+    return False
+
+
 def user_add(module, client, db_name, user, password, roles):
+    #pymongo's user_add is a _create_or_update_user so we won't know if it was changed or updated
+    #without reproducing a lot of the logic in database.py of pymongo
     db = client[db_name]
+
     if roles is None:
         db.add_user(user, password, False)
     else:
-        try:
-            db.add_user(user, password, None, roles=roles)
-        except OperationFailure, e:
-            err_msg = str(e)
-            if LooseVersion(PyMongoVersion) <= LooseVersion('2.5'):
-                err_msg = err_msg + ' (Note: you must be on mongodb 2.4+ and pymongo 2.5+ to use the roles param)'
-            module.fail_json(msg=err_msg)
+        db.add_user(user, password, None, roles=roles)
 
-def user_remove(client, db_name, user):
-    db = client[db_name]
-    db.remove_user(user)
+def user_remove(module, client, db_name, user):
+    exists = user_find(client, user, db_name)
+    if exists:
+        if module.check_mode:
+            module.exit_json(changed=True, user=user)
+        db = client[db_name]
+        db.remove_user(user)
+    else:
+        module.exit_json(changed=False, user=user)
 
 def load_mongocnf():
     config = ConfigParser.RawConfigParser()
@@ -166,6 +293,44 @@ def load_mongocnf():
 
     return creds
 
+
+
+def check_if_roles_changed(uinfo, roles, db_name):
+# We must be aware of users which can read the oplog on a replicaset
+# Such users must have access to the local DB, but since this DB does not store users credentials
+# and is not synchronized among replica sets, the user must be stored on the admin db
+# Therefore their structure is the following :
+# {
+#     "_id" : "admin.oplog_reader",
+#     "user" : "oplog_reader",
+#     "db" : "admin",                    # <-- admin DB
+#     "roles" : [
+#         {
+#             "role" : "read",
+#             "db" : "local"             # <-- local DB
+#         }
+#     ]
+# }
+
+    def make_sure_roles_are_a_list_of_dict(roles, db_name):
+        output = list()
+        for role in roles:
+            if isinstance(role, basestring):
+                new_role = { "role": role, "db": db_name }
+                output.append(new_role)
+            else:
+                output.append(role)
+        return output
+
+    roles_as_list_of_dict = make_sure_roles_are_a_list_of_dict(roles, db_name)
+    uinfo_roles = uinfo.get('roles', [])
+
+    if sorted(roles_as_list_of_dict) == sorted(uinfo_roles):
+        return False
+    return True
+
+
+
 # =========================================
 # Module execution.
 #
@@ -177,14 +342,18 @@ def main():
             login_password=dict(default=None),
             login_host=dict(default='localhost'),
             login_port=dict(default='27017'),
+            login_database=dict(default=None),
             replica_set=dict(default=None),
             database=dict(required=True, aliases=['db']),
             name=dict(required=True, aliases=['user']),
             password=dict(aliases=['pass']),
-            ssl=dict(default=False),
+            ssl=dict(default=False, type='bool'),
             roles=dict(default=None, type='list'),
             state=dict(default='present', choices=['absent', 'present']),
-        )
+            update_password=dict(default="always", choices=["always", "on_create"]),
+            ssl_cert_reqs=dict(default='CERT_REQUIRED', choices=['CERT_NONE', 'CERT_OPTIONAL', 'CERT_REQUIRED']),
+        ),
+        supports_check_mode=True
     )
 
     if not pymongo_found:
@@ -194,60 +363,92 @@ def main():
     login_password = module.params['login_password']
     login_host = module.params['login_host']
     login_port = module.params['login_port']
+    login_database = module.params['login_database']
+
     replica_set = module.params['replica_set']
     db_name = module.params['database']
     user = module.params['name']
     password = module.params['password']
     ssl = module.params['ssl']
-    roles = module.params['roles']
+    ssl_cert_reqs = None
+    roles = module.params['roles'] or []
     state = module.params['state']
+    update_password = module.params['update_password']
 
     try:
-    	if replica_set:
-    	   client = MongoClient(login_host, int(login_port), replicaset=replica_set, ssl=ssl)
-    	else:
-    	   client = MongoClient(login_host, int(login_port), ssl=ssl)
+        connection_params = {
+            "host": login_host,
+            "port": int(login_port),
+        }
 
-        # try to authenticate as a target user to check if it already exists
-        try:
-           client[db_name].authenticate(user, password)
-           if state == 'present':
-              module.exit_json(changed=False, user=user)
-        except OperationFailure:
-           if state == 'absent':
-              module.exit_json(changed=False, user=user)
+        if replica_set:
+            connection_params["replicaset"] = replica_set
+
+        if ssl:
+            connection_params["ssl"] = ssl
+            connection_params["ssl_cert_reqs"] = getattr(ssl_lib, module.params['ssl_cert_reqs'])
+
+        client = MongoClient(**connection_params)
+
+        # NOTE: this check must be done ASAP.
+        # We doesn't need to be authenticated.
+        check_compatibility(module, client)
 
         if login_user is None and login_password is None:
             mongocnf_creds = load_mongocnf()
             if mongocnf_creds is not False:
                 login_user = mongocnf_creds['user']
                 login_password = mongocnf_creds['password']
-        elif login_password is None and login_user is not None:
+        elif login_password is None or login_user is None:
             module.fail_json(msg='when supplying login arguments, both login_user and login_password must be provided')
 
         if login_user is not None and login_password is not None:
-            client.admin.authenticate(login_user, login_password)
+            client.admin.authenticate(login_user, login_password, source=login_database)
+        elif LooseVersion(PyMongoVersion) >= LooseVersion('3.0'):
+            if db_name != "admin":
+                module.fail_json(msg='The localhost login exception only allows the first admin account to be created')
+            #else: this has to be the first admin user added
 
-    except ConnectionFailure, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg='unable to connect to database: %s' % str(e))
 
     if state == 'present':
-        if password is None:
-            module.fail_json(msg='password parameter required when adding a user')
+        if password is None and update_password == 'always':
+            module.fail_json(msg='password parameter required when adding a user unless update_password is set to on_create')
 
         try:
+            uinfo = user_find(client, user, db_name)
+            if update_password != 'always' and uinfo:
+                password = None
+                if not check_if_roles_changed(uinfo, roles, db_name):
+                    module.exit_json(changed=False, user=user)
+
+            if module.check_mode:
+                module.exit_json(changed=True, user=user)
+
             user_add(module, client, db_name, user, password, roles)
-        except OperationFailure, e:
+        except Exception:
+            e = get_exception()
             module.fail_json(msg='Unable to add or update user: %s' % str(e))
+
+            # Here we can  check password change if mongo provide a query for that : https://jira.mongodb.org/browse/SERVER-22848
+            #newuinfo = user_find(client, user, db_name)
+            #if uinfo['role'] == newuinfo['role'] and CheckPasswordHere:
+            #    module.exit_json(changed=False, user=user)
 
     elif state == 'absent':
         try:
-            user_remove(client, db_name, user)
-        except OperationFailure, e:
+            user_remove(module, client, db_name, user)
+        except Exception:
+            e = get_exception()
             module.fail_json(msg='Unable to remove user: %s' % str(e))
 
     module.exit_json(changed=True, user=user)
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.pycompat24 import get_exception
+
+if __name__ == '__main__':
+    main()

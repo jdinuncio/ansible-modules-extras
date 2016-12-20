@@ -19,13 +19,20 @@
 # along with this software.  If not, see <http://www.gnu.org/licenses/>.
 
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: modprobe
 short_description: Add or remove kernel modules
 requirements: []
 version_added: 1.4
-author: David Stygstra, Julien Dauphant, Matt Jeffery
+author:
+    - "David Stygstra (@stygstra)" 
+    - "Julien Dauphant"
+    - "Matt Jeffery"
 description:
     - Add or remove kernel modules.
 options:
@@ -49,10 +56,21 @@ options:
 
 EXAMPLES = '''
 # Add the 802.1q module
-- modprobe: name=8021q state=present
+- modprobe:
+    name: 8021q
+    state: present
+
 # Add the dummy module
-- modprobe: name=dummy state=present params="numdummies=2"
+- modprobe:
+    name: dummy
+    state: present
+    params: 'numdummies=2'
 '''
+
+from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
+import shlex
+
 
 def main():
     module = AnsibleModule(
@@ -81,7 +99,8 @@ def main():
                 present = True
                 break
         modules.close()
-    except IOError, e:
+    except IOError:
+        e = get_exception()
         module.fail_json(msg=str(e), **args)
 
     # Check only; don't modify
@@ -97,19 +116,20 @@ def main():
     # Add/remove module as needed
     if args['state'] == 'present':
         if not present:
-            rc, _, err = module.run_command(['modprobe', args['name'], args['params']])
+            command = [module.get_bin_path('modprobe', True), args['name']]
+            command.extend(shlex.split(args['params']))
+            rc, _, err = module.run_command(command)
             if rc != 0:
                 module.fail_json(msg=err, **args)
             args['changed'] = True
     elif args['state'] == 'absent':
         if present:
-            rc, _, err = module.run_command(['rmmod', args['name']])
+            rc, _, err = module.run_command([module.get_bin_path('modprobe', True), '-r', args['name']])
             if rc != 0:
                 module.fail_json(msg=err, **args)
             args['changed'] = True
 
     module.exit_json(**args)
 
-# import module snippets
-from ansible.module_utils.basic import *
-main()
+if __name__ == '__main__':
+    main()

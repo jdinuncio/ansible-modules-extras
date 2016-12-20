@@ -19,9 +19,13 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
-author: Alexander Bulimov
+author: "Alexander Bulimov (@abulimov)"
 module: lvg
 short_description: Configure LVM volume groups
 description:
@@ -35,6 +39,7 @@ options:
   pvs:
     description:
     - List of comma-separated devices to use as physical devices in this volume group. Required when creating or resizing volume group.
+    - The module will take care of running pvcreate if needed. 
     required: false
   pesize:
     description:
@@ -65,17 +70,24 @@ notes:
 
 EXAMPLES = '''
 # Create a volume group on top of /dev/sda1 with physical extent size = 32MB.
-- lvg:  vg=vg.services pvs=/dev/sda1 pesize=32
+- lvg:
+    vg: vg.services
+    pvs: /dev/sda1
+    pesize: 32
 
 # Create or resize a volume group on top of /dev/sdb1 and /dev/sdc5.
 # If, for example, we already have VG vg.services on top of /dev/sdb1,
 # this VG will be extended by /dev/sdc5.  Or if vg.services was created on
 # top of /dev/sda5, we first extend it with /dev/sdb1 and /dev/sdc5,
 # and then reduce by /dev/sda5.
-- lvg: vg=vg.services pvs=/dev/sdb1,/dev/sdc5
+- lvg:
+    vg: vg.services
+    pvs: /dev/sdb1,/dev/sdc5
 
 # Remove a volume group with name vg.services.
-- lvg: vg=vg.services state=absent
+- lvg:
+    vg: vg.services
+    state: absent
 '''
 
 def parse_vgs(data):
@@ -130,6 +142,7 @@ def main():
     pesize = module.params['pesize']
     vgoptions = module.params['vg_options'].split()
 
+    dev_list = []
     if module.params['pvs']:
         dev_list = module.params['pvs']
     elif state == 'present':
@@ -183,7 +196,7 @@ def main():
                 ### create PV
                 pvcreate_cmd = module.get_bin_path('pvcreate', True)
                 for current_dev in dev_list:
-                    rc,_,err = module.run_command("%s %s" % (pvcreate_cmd,current_dev))
+                    rc,_,err = module.run_command("%s -f %s" % (pvcreate_cmd,current_dev))
                     if rc == 0:
                         changed = True
                     else:
@@ -211,7 +224,7 @@ def main():
                     module.fail_json(msg="Refuse to remove non-empty volume group %s without force=yes"%(vg))
 
         ### resize VG
-        current_devs = [ pv['name'] for pv in pvs if pv['vg_name'] == vg ]
+        current_devs = [ os.path.realpath(pv['name']) for pv in pvs if pv['vg_name'] == vg ]
         devs_to_remove = list(set(current_devs) - set(dev_list))
         devs_to_add = list(set(dev_list) - set(current_devs))
 
@@ -224,7 +237,7 @@ def main():
                     ### create PV
                     pvcreate_cmd = module.get_bin_path('pvcreate', True)
                     for current_dev in devs_to_add:
-                        rc,_,err = module.run_command("%s %s" % (pvcreate_cmd, current_dev))
+                        rc,_,err = module.run_command("%s -f %s" % (pvcreate_cmd, current_dev))
                         if rc == 0:
                             changed = True
                         else:
@@ -251,4 +264,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()

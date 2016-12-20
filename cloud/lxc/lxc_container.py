@@ -19,6 +19,10 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = """
 ---
 module: lxc_container
@@ -26,7 +30,7 @@ short_description: Manage LXC Containers
 version_added: 1.8.0
 description:
   - Management of LXC containers
-author: Kevin Carter
+author: "Kevin Carter (@cloudnull)"
 options:
     name:
         description:
@@ -38,6 +42,8 @@ options:
           - lvm
           - loop
           - btrfs
+          - overlayfs
+          - zfs
         description:
           - Backend storage type for the container.
         required: false
@@ -55,7 +61,7 @@ options:
         description:
           - Path to the LXC configuration file.
         required: false
-        default: /etc/lxc/default.conf
+        default: null
     lv_name:
         description:
           - Name of the logical volume, defaults to the container name.
@@ -112,6 +118,24 @@ options:
           - Set the log level for a container where *container_log* was set.
         required: false
         default: INFO
+    clone_name:
+        version_added: "2.0"
+        description:
+          - Name of the new cloned server. This is only used when state is
+            clone.
+        required: false
+        default: false
+    clone_snapshot:
+        version_added: "2.0"
+        required: false
+        choices:
+          - true
+          - false
+        description:
+          - Create a snapshot a container when cloning. This is not supported
+            by all container storage backends. Enabling this may fail if the
+            backing store does not support snapshots.
+        default: false
     archive:
         choices:
           - true
@@ -124,7 +148,7 @@ options:
         description:
           - Path the save the archived container. If the path does not exist
             the archive method will attempt to create it.
-        default: /tmp
+        default: null
     archive_compression:
         choices:
           - gzip
@@ -142,14 +166,21 @@ options:
           - absent
           - frozen
         description:
-          - Start a container right after it's created.
+          - Define the state of a container. If you clone a container using
+            `clone_name` the newly cloned container created in a stopped state.
+            The running container will be stopped while the clone operation is
+            happening and upon completion of the clone the original container
+            state will be restored.
         required: false
         default: started
     container_config:
         description:
           - list of 'key=value' options to use when configuring a container.
         required: false
-requirements: ['lxc >= 1.0', 'python2-lxc >= 0.1']
+requirements:
+  - 'lxc >= 1.0 # OS package'
+  - 'python >= 2.6 # OS Package'
+  - 'lxc-python2 >= 0.1 # PIP Package from https://github.com/lxc/python2-lxc'
 notes:
   - Containers must have a unique name. If you attempt to create a container
     with a name that already exists in the users namespace the module will
@@ -169,7 +200,8 @@ notes:
     creating the archive.
   - If your distro does not have a package for "python2-lxc", which is a
     requirement for this module, it can be installed from source at
-    "https://github.com/lxc/python2-lxc"
+    "https://github.com/lxc/python2-lxc" or installed via pip using the package
+    name lxc-python2.
 """
 
 EXAMPLES = """
@@ -203,6 +235,7 @@ EXAMPLES = """
 - name: Create filesystem container
   lxc_container:
     name: test-container-config
+    backing_store: dir
     container_log: true
     template: ubuntu
     state: started
@@ -216,7 +249,7 @@ EXAMPLES = """
 # Create an lvm container, run a complex command in it, add additional
 # configuration to it, create an archive of it, and finally leave the container
 # in a frozen state. The container archive will be compressed using bzip2
-- name: Create an lvm container
+- name: Create a frozen lvm container
   lxc_container:
     name: test-container-lvm
     container_log: true
@@ -239,15 +272,8 @@ EXAMPLES = """
   register: lvm_container_info
 
 - name: Debug info on container "test-container-lvm"
-  debug: var=lvm_container_info
-
-- name: Get information on a given container.
-  lxc_container:
-    name: test-container-config
-  register: config_container_info
-
-- name: debug info on container "test-container"
-  debug: var=config_container_info
+  debug:
+    var: lvm_container_info
 
 - name: Run a command in a container and ensure its in a "stopped" state.
   lxc_container:
@@ -263,19 +289,19 @@ EXAMPLES = """
     container_command: |
       echo 'hello world.' | tee /opt/frozen
 
-- name: Start a container.
+- name: Start a container
   lxc_container:
     name: test-container-stopped
     state: started
 
-- name: Run a command in a container and then restart it.
+- name: Run a command in a container and then restart it
   lxc_container:
     name: test-container-started
     state: restarted
     container_command: |
       echo 'hello world.' | tee /opt/restarted
 
-- name: Run a complex command within a "running" container.
+- name: Run a complex command within a "running" container
   lxc_container:
     name: test-container-started
     container_command: |
@@ -295,9 +321,56 @@ EXAMPLES = """
     archive: true
     archive_path: /opt/archives
 
-- name: Destroy a container.
+# Create a container using overlayfs, create an archive of it, create a
+# snapshot clone of the container and and finally leave the container
+# in a frozen state. The container archive will be compressed using gzip.
+- name: Create an overlayfs container archive and clone it
   lxc_container:
-    name: "{{ item }}"
+    name: test-container-overlayfs
+    container_log: true
+    template: ubuntu
+    state: started
+    backing_store: overlayfs
+    template_options: --release trusty
+    clone_snapshot: true
+    clone_name: test-container-overlayfs-clone-snapshot
+    archive: true
+    archive_compression: gzip
+  register: clone_container_info
+
+- name: debug info on container "test-container"
+  debug:
+    var: clone_container_info
+
+- name: Clone a container using snapshot
+  lxc_container:
+    name: test-container-overlayfs-clone-snapshot
+    backing_store: overlayfs
+    clone_name: test-container-overlayfs-clone-snapshot2
+    clone_snapshot: true
+
+- name: Create a new container and clone it
+  lxc_container:
+    name: test-container-new-archive
+    backing_store: dir
+    clone_name: test-container-new-archive-clone
+
+- name: Archive and clone a container then destroy it
+  lxc_container:
+    name: test-container-new-archive
+    state: absent
+    clone_name: test-container-new-archive-destroyed-clone
+    archive: true
+    archive_compression: gzip
+
+- name: Start a cloned container.
+  lxc_container:
+    name: test-container-new-archive-destroyed-clone
+    state: started
+
+- name: Destroy a container
+  lxc_container:
+    name: '{{ item }}'
     state: absent
   with_items:
     - test-container-stopped
@@ -305,15 +378,66 @@ EXAMPLES = """
     - test-container-frozen
     - test-container-lvm
     - test-container-config
+    - test-container-overlayfs
+    - test-container-overlayfs-clone
+    - test-container-overlayfs-clone-snapshot
+    - test-container-overlayfs-clone-snapshot2
+    - test-container-new-archive
+    - test-container-new-archive-clone
+    - test-container-new-archive-destroyed-clone
 """
 
+RETURN="""
+lxc_container:
+    description: container information
+    returned: success
+    type: list
+    contains:
+        name:
+            description: name of the lxc container
+            returned: success
+            type: string
+            sample: test_host
+        init_pid:
+            description: pid of the lxc init process
+            returned: success
+            type: int
+            sample: 19786
+        interfaces:
+            description: list of the container's network interfaces
+            returned: success
+            type: list
+            sample: [ "eth0", "lo" ]
+        ips:
+            description: list of ips
+            returned: success
+            type: list
+            sample: [ "10.0.3.3" ]
+        state:
+            description: resulting state of the container
+            returned: success
+            type: string
+            sample: "running"
+        archive:
+            description: resulting state of the container
+            returned: success, when archive is true
+            type: string
+            sample: "/tmp/test-container-config.tar"
+        clone:
+            description: if the container was cloned
+            returned: success, when clone_name is specified
+            type: boolean
+            sample: True
+"""
+
+import re
 
 try:
     import lxc
 except ImportError:
-    msg = 'The lxc module is not importable. Check the requirements.'
-    print("failed=True msg='%s'" % msg)
-    raise SystemExit(msg)
+    HAS_LXC = False
+else:
+    HAS_LXC = True
 
 
 # LXC_COMPRESSION_MAP is a map of available compression types when creating
@@ -351,6 +475,15 @@ LXC_COMMAND_MAP = {
             'directory': '--dir',
             'zfs_root': '--zfsroot'
         }
+    },
+    'clone': {
+        'variables': {
+            'backing_store': '--backingstore',
+            'lxc_path': '--lxcpath',
+            'fs_size': '--fssize',
+            'name': '--orig',
+            'clone_name': '--new'
+        }
     }
 }
 
@@ -365,10 +498,16 @@ LXC_BACKING_STORE = {
         'zfs_root'
     ],
     'btrfs': [
-        'lv_name', 'vg_name', 'thinpool', 'zfs_root'
+        'lv_name', 'vg_name', 'thinpool', 'zfs_root', 'fs_type', 'fs_size'
     ],
     'loop': [
         'lv_name', 'vg_name', 'thinpool', 'zfs_root'
+    ],
+    'overlayfs': [
+        'lv_name', 'vg_name', 'fs_type', 'fs_size', 'thinpool', 'zfs_root'
+    ],
+    'zfs': [
+        'lv_name', 'vg_name', 'fs_type', 'fs_size', 'thinpool'
     ]
 }
 
@@ -388,7 +527,8 @@ LXC_ANSIBLE_STATES = {
     'stopped': '_stopped',
     'restarted': '_restarted',
     'absent': '_destroyed',
-    'frozen': '_frozen'
+    'frozen': '_frozen',
+    'clone': '_clone'
 }
 
 
@@ -425,13 +565,8 @@ def create_script(command):
     import subprocess
     import tempfile
 
-    # Ensure that the directory /opt exists.
-    if not path.isdir('/opt'):
-        os.mkdir('/opt')
-
-    # Create the script.
-    script_file = path.join('/opt', '.lxc-attach-script')
-    f = open(script_file, 'wb')
+    (fd, script_file) = tempfile.mkstemp(prefix='lxc-attach-script')
+    f = os.fdopen(fd, 'wb')
     try:
         f.write(ATTACH_TEMPLATE % {'container_command': command})
         f.flush()
@@ -439,18 +574,13 @@ def create_script(command):
         f.close()
 
     # Ensure the script is executable.
-    os.chmod(script_file, 0755)
-
-    # Get temporary directory.
-    tempdir = tempfile.gettempdir()
+    os.chmod(script_file, int('0700',8))
 
     # Output log file.
-    stdout = path.join(tempdir, 'lxc-attach-script.log')
-    stdout_file = open(stdout, 'ab')
+    stdout_file = os.fdopen(tempfile.mkstemp(prefix='lxc-attach-script-log')[0], 'ab')
 
     # Error log file.
-    stderr = path.join(tempdir, 'lxc-attach-script.err')
-    stderr_file = open(stderr, 'ab')
+    stderr_file = os.fdopen(tempfile.mkstemp(prefix='lxc-attach-script-err')[0], 'ab')
 
     # Execute the script command.
     try:
@@ -479,9 +609,11 @@ class LxcContainerManagement(object):
         self.state = self.module.params.get('state', None)
         self.state_change = False
         self.lxc_vg = None
+        self.lxc_path = self.module.params.get('lxc_path', None)
         self.container_name = self.module.params['name']
         self.container = self.get_container_bind()
         self.archive_info = None
+        self.clone_info = None
 
     def get_container_bind(self):
         return lxc.Container(name=self.container_name)
@@ -502,15 +634,15 @@ class LxcContainerManagement(object):
         return num
 
     @staticmethod
-    def _container_exists(name):
+    def _container_exists(container_name, lxc_path=None):
         """Check if a container exists.
 
-        :param name: Name of the container.
+        :param container_name: Name of the container.
         :type: ``str``
         :returns: True or False if the container is found.
         :rtype: ``bol``
         """
-        if [i for i in lxc.list_containers() if i == name]:
+        if [i for i in lxc.list_containers(config_path=lxc_path) if i == container_name]:
             return True
         else:
             return False
@@ -543,56 +675,36 @@ class LxcContainerManagement(object):
         """
 
         # Remove incompatible storage backend options.
+        variables = variables.copy()
         for v in LXC_BACKING_STORE[self.module.params['backing_store']]:
             variables.pop(v, None)
 
         return_dict = dict()
+        false_values = [None, ''] + BOOLEANS_FALSE
         for k, v in variables.items():
             _var = self.module.params.get(k)
-            if not [i for i in [None, ''] + BOOLEANS_FALSE if i == _var]:
+            if _var not in false_values:
                 return_dict[v] = _var
         else:
             return return_dict
 
-    def _run_command(self, build_command, unsafe_shell=False, timeout=600):
+    def _run_command(self, build_command, unsafe_shell=False):
         """Return information from running an Ansible Command.
 
         This will squash the build command list into a string and then
         execute the command via Ansible. The output is returned to the method.
         This output is returned as `return_code`, `stdout`, `stderr`.
 
-        Prior to running the command the method will look to see if the LXC
-        lockfile is present. If the lockfile "/var/lock/subsys/lxc" the method
-        will wait upto 10 minutes for it to be gone; polling every 5 seconds.
-
         :param build_command: Used for the command and all options.
         :type build_command: ``list``
         :param unsafe_shell: Enable or Disable unsafe sell commands.
         :type unsafe_shell: ``bol``
-        :param timeout: Time before the container create process quites.
-        :type timeout: ``int``
         """
 
-        lockfile = '/var/lock/subsys/lxc'
-
-        for _ in xrange(timeout):
-            if os.path.exists(lockfile):
-                time.sleep(1)
-            else:
-                return self.module.run_command(
-                    ' '.join(build_command),
-                    use_unsafe_shell=unsafe_shell
-                )
-        else:
-            message = (
-                'The LXC subsystem is locked and after 5 minutes it never'
-                ' became unlocked. Lockfile [ %s ]' % lockfile
-            )
-            self.failure(
-                error='LXC subsystem locked',
-                rc=0,
-                msg=message
-            )
+        return self.module.run_command(
+            ' '.join(build_command),
+            use_unsafe_shell=unsafe_shell
+        )
 
     def _config(self):
         """Configure an LXC container.
@@ -620,11 +732,14 @@ class LxcContainerManagement(object):
 
         config_change = False
         for key, value in parsed_options:
+            key = key.strip()
+            value = value.strip()
             new_entry = '%s = %s\n' % (key, value)
+            keyre = re.compile(r'%s(\s+)?=' % key)
             for option_line in container_config:
                 # Look for key in config
-                if option_line.startswith(key):
-                    _, _value = option_line.split('=')
+                if keyre.match(option_line):
+                    _, _value = option_line.split('=', 1)
                     config_value = ' '.join(_value.split())
                     line_index = container_config.index(option_line)
                     # If the sanitized values don't match replace them
@@ -654,6 +769,68 @@ class LxcContainerManagement(object):
             elif container_state == 'frozen':
                 self._container_startup()
                 self.container.freeze()
+
+    def _container_create_clone(self):
+        """Clone a new LXC container from an existing container.
+
+        This method will clone an existing container to a new container using
+        the `clone_name` variable as the new container name. The method will
+        create a container if the container `name` does not exist.
+
+        Note that cloning a container will ensure that the original container
+        is "stopped" before the clone can be done. Because this operation can
+        require a state change the method will return the original container
+        to its prior state upon completion of the clone.
+
+        Once the clone is complete the new container will be left in a stopped
+        state.
+        """
+
+        # Ensure that the state of the original container is stopped
+        container_state = self._get_state()
+        if container_state != 'stopped':
+            self.state_change = True
+            self.container.stop()
+
+        build_command = [
+            self.module.get_bin_path('lxc-clone', True),
+        ]
+
+        build_command = self._add_variables(
+            variables_dict=self._get_vars(
+                variables=LXC_COMMAND_MAP['clone']['variables']
+            ),
+            build_command=build_command
+        )
+
+        # Load logging for the instance when creating it.
+        if self.module.params.get('clone_snapshot') in BOOLEANS_TRUE:
+            build_command.append('--snapshot')
+        # Check for backing_store == overlayfs if so force the use of snapshot
+        # If overlay fs is used and snapshot is unset the clone command will
+        # fail with an unsupported type.
+        elif self.module.params.get('backing_store') == 'overlayfs':
+            build_command.append('--snapshot')
+
+        rc, return_data, err = self._run_command(build_command)
+        if rc != 0:
+            message = "Failed executing lxc-clone."
+            self.failure(
+                err=err, rc=rc, msg=message, command=' '.join(
+                    build_command
+                )
+            )
+        else:
+            self.state_change = True
+            # Restore the original state of the origin container if it was
+            # not in a stopped state.
+            if container_state == 'running':
+                self.container.start()
+            elif container_state == 'frozen':
+                self.container.start()
+                self.container.freeze()
+
+        return True
 
     def _create(self):
         """Create a new LXC container.
@@ -709,9 +886,9 @@ class LxcContainerManagement(object):
 
         rc, return_data, err = self._run_command(build_command)
         if rc != 0:
-            msg = "Failed executing lxc-create."
+            message = "Failed executing lxc-create."
             self.failure(
-                err=err, rc=rc, msg=msg, command=' '.join(build_command)
+                err=err, rc=rc, msg=message, command=' '.join(build_command)
             )
         else:
             self.state_change = True
@@ -727,7 +904,8 @@ class LxcContainerManagement(object):
             'interfaces': self.container.get_interfaces(),
             'ips': self.container.get_ips(),
             'state': self._get_state(),
-            'init_pid': int(self.container.init_pid)
+            'init_pid': int(self.container.init_pid),
+            'name' : self.container_name,
         }
 
     def _unfreeze(self):
@@ -751,7 +929,7 @@ class LxcContainerManagement(object):
         :rtype: ``str``
         """
 
-        if self._container_exists(name=self.container_name):
+        if self._container_exists(container_name=self.container_name, lxc_path=self.lxc_path):
             return str(self.container.state).lower()
         else:
             return str('absent')
@@ -794,7 +972,7 @@ class LxcContainerManagement(object):
                 rc=1,
                 msg='The container [ %s ] failed to start. Check to lxc is'
                     ' available and that the container is in a functional'
-                    ' state.'
+                    ' state.' % self.container_name
             )
 
     def _check_archive(self):
@@ -808,6 +986,23 @@ class LxcContainerManagement(object):
                 'archive': self._container_create_tar()
             }
 
+    def _check_clone(self):
+        """Create a compressed archive of a container.
+
+        This will store archive_info in as self.archive_info
+        """
+
+        clone_name = self.module.params.get('clone_name')
+        if clone_name:
+            if not self._container_exists(container_name=clone_name, lxc_path=self.lxc_path):
+                self.clone_info = {
+                    'cloned': self._container_create_clone()
+                }
+            else:
+                self.clone_info = {
+                    'cloned': False
+                }
+
     def _destroyed(self, timeout=60):
         """Ensure a container is destroyed.
 
@@ -816,11 +1011,14 @@ class LxcContainerManagement(object):
         """
 
         for _ in xrange(timeout):
-            if not self._container_exists(name=self.container_name):
+            if not self._container_exists(container_name=self.container_name, lxc_path=self.lxc_path):
                 break
 
             # Check if the container needs to have an archive created.
             self._check_archive()
+
+            # Check if the container is to be cloned
+            self._check_clone()
 
             if self._get_state() != 'stopped':
                 self.state_change = True
@@ -852,7 +1050,7 @@ class LxcContainerManagement(object):
         """
 
         self.check_count(count=count, method='frozen')
-        if self._container_exists(name=self.container_name):
+        if self._container_exists(container_name=self.container_name, lxc_path=self.lxc_path):
             self._execute_command()
 
             # Perform any configuration updates
@@ -871,6 +1069,9 @@ class LxcContainerManagement(object):
 
             # Check if the container needs to have an archive created.
             self._check_archive()
+
+            # Check if the container is to be cloned
+            self._check_clone()
         else:
             self._create()
             count += 1
@@ -886,7 +1087,7 @@ class LxcContainerManagement(object):
         """
 
         self.check_count(count=count, method='restart')
-        if self._container_exists(name=self.container_name):
+        if self._container_exists(container_name=self.container_name, lxc_path=self.lxc_path):
             self._execute_command()
 
             # Perform any configuration updates
@@ -896,8 +1097,14 @@ class LxcContainerManagement(object):
                 self.container.stop()
                 self.state_change = True
 
+            # Run container startup
+            self._container_startup()
+
             # Check if the container needs to have an archive created.
             self._check_archive()
+
+            # Check if the container is to be cloned
+            self._check_clone()
         else:
             self._create()
             count += 1
@@ -913,7 +1120,7 @@ class LxcContainerManagement(object):
         """
 
         self.check_count(count=count, method='stop')
-        if self._container_exists(name=self.container_name):
+        if self._container_exists(container_name=self.container_name, lxc_path=self.lxc_path):
             self._execute_command()
 
             # Perform any configuration updates
@@ -925,6 +1132,9 @@ class LxcContainerManagement(object):
 
             # Check if the container needs to have an archive created.
             self._check_archive()
+
+            # Check if the container is to be cloned
+            self._check_clone()
         else:
             self._create()
             count += 1
@@ -940,7 +1150,7 @@ class LxcContainerManagement(object):
         """
 
         self.check_count(count=count, method='start')
-        if self._container_exists(name=self.container_name):
+        if self._container_exists(container_name=self.container_name, lxc_path=self.lxc_path):
             container_state = self._get_state()
             if container_state == 'running':
                 pass
@@ -965,6 +1175,9 @@ class LxcContainerManagement(object):
 
             # Check if the container needs to have an archive created.
             self._check_archive()
+
+            # Check if the container is to be cloned
+            self._check_clone()
         else:
             self._create()
             count += 1
@@ -1007,18 +1220,18 @@ class LxcContainerManagement(object):
         all_lvms = [i.split() for i in stdout.splitlines()][1:]
         return [lv_entry[0] for lv_entry in all_lvms if lv_entry[1] == vg]
 
-    def _get_vg_free_pe(self, name):
+    def _get_vg_free_pe(self, vg_name):
         """Return the available size of a given VG.
 
-        :param name: Name of volume.
-        :type name: ``str``
+        :param vg_name: Name of volume.
+        :type vg_name: ``str``
         :returns: size and measurement of an LV
         :type: ``tuple``
         """
 
         build_command = [
             'vgdisplay',
-            name,
+            vg_name,
             '--units',
             'g'
         ]
@@ -1027,7 +1240,7 @@ class LxcContainerManagement(object):
             self.failure(
                 err=err,
                 rc=rc,
-                msg='failed to read vg %s' % name,
+                msg='failed to read vg %s' % vg_name,
                 command=' '.join(build_command)
             )
 
@@ -1036,17 +1249,17 @@ class LxcContainerManagement(object):
         _free_pe = free_pe[0].split()
         return float(_free_pe[-2]), _free_pe[-1]
 
-    def _get_lv_size(self, name):
+    def _get_lv_size(self, lv_name):
         """Return the available size of a given LV.
 
-        :param name: Name of volume.
-        :type name: ``str``
+        :param lv_name: Name of volume.
+        :type lv_name: ``str``
         :returns: size and measurement of an LV
         :type: ``tuple``
         """
 
         vg = self._get_lxc_vg()
-        lv = os.path.join(vg, name)
+        lv = os.path.join(vg, lv_name)
         build_command = [
             'lvdisplay',
             lv,
@@ -1080,7 +1293,7 @@ class LxcContainerManagement(object):
         """
 
         vg = self._get_lxc_vg()
-        free_space, messurement = self._get_vg_free_pe(name=vg)
+        free_space, messurement = self._get_vg_free_pe(vg_name=vg)
 
         if free_space < float(snapshot_size_gb):
             message = (
@@ -1143,6 +1356,8 @@ class LxcContainerManagement(object):
         :type source_dir: ``str``
         """
 
+        old_umask = os.umask(int('0077',8))
+
         archive_path = self.module.params.get('archive_path')
         if not os.path.isdir(archive_path):
             os.makedirs(archive_path)
@@ -1173,6 +1388,9 @@ class LxcContainerManagement(object):
             build_command=build_command,
             unsafe_shell=True
         )
+
+        os.umask(old_umask)
+
         if rc != 0:
             self.failure(
                 err=err,
@@ -1183,25 +1401,25 @@ class LxcContainerManagement(object):
 
         return archive_name
 
-    def _lvm_lv_remove(self, name):
+    def _lvm_lv_remove(self, lv_name):
         """Remove an LV.
 
-        :param name: The name of the logical volume
-        :type name: ``str``
+        :param lv_name: The name of the logical volume
+        :type lv_name: ``str``
         """
 
         vg = self._get_lxc_vg()
         build_command = [
             self.module.get_bin_path('lvremove', True),
             "-f",
-            "%s/%s" % (vg, name),
+            "%s/%s" % (vg, lv_name),
         ]
         rc, stdout, err = self._run_command(build_command)
         if rc != 0:
             self.failure(
                 err=err,
                 rc=rc,
-                msg='Failed to remove LVM LV %s/%s' % (vg, name),
+                msg='Failed to remove LVM LV %s/%s' % (vg, lv_name),
                 command=' '.join(build_command)
             )
 
@@ -1213,21 +1431,34 @@ class LxcContainerManagement(object):
         :param temp_dir: path to the temporary local working directory
         :type temp_dir: ``str``
         """
+        # This loop is created to support overlayfs archives. This should
+        # squash all of the layers into a single archive.
+        fs_paths = container_path.split(':')
+        if 'overlayfs' in fs_paths:
+            fs_paths.pop(fs_paths.index('overlayfs'))
 
-        build_command = [
-            self.module.get_bin_path('rsync', True),
-            '-aHAX',
-            container_path,
-            temp_dir
-        ]
-        rc, stdout, err = self._run_command(build_command, unsafe_shell=True)
-        if rc != 0:
-            self.failure(
-                err=err,
-                rc=rc,
-                msg='failed to perform archive',
-                command=' '.join(build_command)
+        for fs_path in fs_paths:
+            # Set the path to the container data
+            fs_path = os.path.dirname(fs_path)
+
+            # Run the sync command
+            build_command = [
+                self.module.get_bin_path('rsync', True),
+                '-aHAX',
+                fs_path,
+                temp_dir
+            ]
+            rc, stdout, err = self._run_command(
+                build_command,
+                unsafe_shell=True
             )
+            if rc != 0:
+                self.failure(
+                    err=err,
+                    rc=rc,
+                    msg='failed to perform archive',
+                    command=' '.join(build_command)
+                )
 
     def _unmount(self, mount_point):
         """Unmount a file system.
@@ -1247,6 +1478,33 @@ class LxcContainerManagement(object):
                 rc=rc,
                 msg='failed to unmount [ %s ]' % mount_point,
                 command=' '.join(build_command)
+            )
+
+    def _overlayfs_mount(self, lowerdir, upperdir, mount_point):
+        """mount an lv.
+
+        :param lowerdir: name/path of the lower directory
+        :type lowerdir: ``str``
+        :param upperdir: name/path of the upper directory
+        :type upperdir: ``str``
+        :param mount_point: path on the file system that is mounted.
+        :type mount_point: ``str``
+        """
+
+        build_command = [
+            self.module.get_bin_path('mount', True),
+            '-t overlayfs',
+            '-o lowerdir=%s,upperdir=%s' % (lowerdir, upperdir),
+            'overlayfs',
+            mount_point,
+        ]
+        rc, stdout, err = self._run_command(build_command)
+        if rc != 0:
+            self.failure(
+                err=err,
+                rc=rc,
+                msg='failed to mount overlayfs:%s:%s to %s -- Command: %s'
+                    % (lowerdir, upperdir, mount_point, build_command)
             )
 
     def _container_create_tar(self):
@@ -1275,13 +1533,15 @@ class LxcContainerManagement(object):
 
         # Test if the containers rootfs is a block device
         block_backed = lxc_rootfs.startswith(os.path.join(os.sep, 'dev'))
+
+        # Test if the container is using overlayfs
+        overlayfs_backed = lxc_rootfs.startswith('overlayfs')
+
         mount_point = os.path.join(work_dir, 'rootfs')
 
         # Set the snapshot name if needed
         snapshot_name = '%s_lxc_snapshot' % self.container_name
 
-        # Set the path to the container data
-        container_path = os.path.dirname(lxc_rootfs)
         container_state = self._get_state()
         try:
             # Ensure the original container is stopped or frozen
@@ -1292,7 +1552,7 @@ class LxcContainerManagement(object):
                     self.container.stop()
 
             # Sync the container data from the container_path to work_dir
-            self._rsync_data(container_path, temp_dir)
+            self._rsync_data(lxc_rootfs, temp_dir)
 
             if block_backed:
                 if snapshot_name not in self._lvm_lv_list():
@@ -1301,7 +1561,7 @@ class LxcContainerManagement(object):
 
                     # Take snapshot
                     size, measurement = self._get_lv_size(
-                        name=self.container_name
+                        lv_name=self.container_name
                     )
                     self._lvm_snapshot_create(
                         source_lv=self.container_name,
@@ -1322,6 +1582,25 @@ class LxcContainerManagement(object):
                             ' up old snapshot of containers before continuing.'
                             % snapshot_name
                     )
+            elif overlayfs_backed:
+                lowerdir, upperdir = lxc_rootfs.split(':')[1:]
+                self._overlayfs_mount(
+                    lowerdir=lowerdir,
+                    upperdir=upperdir,
+                    mount_point=mount_point
+                )
+
+            # Set the state as changed and set a new fact
+            self.state_change = True
+            return self._create_tar(source_dir=work_dir)
+        finally:
+            if block_backed or overlayfs_backed:
+                # unmount snapshot
+                self._unmount(mount_point)
+
+            if block_backed:
+                # Remove snapshot
+                self._lvm_lv_remove(snapshot_name)
 
             # Restore original state of container
             if container_state == 'running':
@@ -1329,17 +1608,6 @@ class LxcContainerManagement(object):
                     self.container.unfreeze()
                 else:
                     self.container.start()
-
-            # Set the state as changed and set a new fact
-            self.state_change = True
-            return self._create_tar(source_dir=work_dir)
-        finally:
-            if block_backed:
-                # unmount snapshot
-                self._unmount(mount_point)
-
-                # Remove snapshot
-                self._lvm_lv_remove(snapshot_name)
 
             # Remove tmpdir
             shutil.rmtree(temp_dir)
@@ -1374,6 +1642,9 @@ class LxcContainerManagement(object):
         if self.archive_info:
             outcome.update(self.archive_info)
 
+        if self.clone_info:
+            outcome.update(self.clone_info)
+
         self.module.exit_json(
             changed=self.state_change,
             lxc_container=outcome
@@ -1402,8 +1673,7 @@ def main():
                 type='str'
             ),
             config=dict(
-                type='str',
-                default='/etc/lxc/default.conf'
+                type='path',
             ),
             vg_name=dict(
                 type='str',
@@ -1421,7 +1691,7 @@ def main():
                 default='5G'
             ),
             directory=dict(
-                type='str'
+                type='path'
             ),
             zfs_root=dict(
                 type='str'
@@ -1430,7 +1700,7 @@ def main():
                 type='str'
             ),
             lxc_path=dict(
-                type='str'
+                type='path'
             ),
             state=dict(
                 choices=LXC_ANSIBLE_STATES.keys(),
@@ -1443,20 +1713,27 @@ def main():
                 type='str'
             ),
             container_log=dict(
-                choices=BOOLEANS,
+                type='bool',
                 default='false'
             ),
             container_log_level=dict(
                 choices=[n for i in LXC_LOGGING_LEVELS.values() for n in i],
                 default='INFO'
             ),
+            clone_name=dict(
+                type='str',
+                required=False
+            ),
+            clone_snapshot=dict(
+                type='bool',
+                default='false'
+            ),
             archive=dict(
-                choices=BOOLEANS,
+                type='bool',
                 default='false'
             ),
             archive_path=dict(
-                type='str',
-                default='/tmp'
+                type='path',
             ),
             archive_compression=dict(
                 choices=LXC_COMPRESSION_MAP.keys(),
@@ -1464,7 +1741,15 @@ def main():
             )
         ),
         supports_check_mode=False,
+        required_if = ([
+            ('archive', True, ['archive_path'])
+        ]),
     )
+
+    if not HAS_LXC:
+        module.fail_json(
+            msg='The `lxc` module is not importable. Check the requirements.'
+        )
 
     lv_name = module.params.get('lv_name')
     if not lv_name:
@@ -1476,5 +1761,5 @@ def main():
 
 # import module bits
 from ansible.module_utils.basic import *
-main()
-
+if __name__ == '__main__':
+    main()

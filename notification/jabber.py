@@ -1,5 +1,27 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+#
+# (c) 2015, Brian Coca <bcoca@ansible.com>
+#
+# This file is part of Ansible
+#
+# Ansible is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Ansible is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ansible.  If not, see <http://www.gnu.org/licenses/>
+
+
+ANSIBLE_METADATA = {'status': ['stableinterface'],
+                    'supported_by': 'committer',
+                    'version': '1.0'}
 
 DOCUMENTATION = '''
 ---
@@ -11,15 +33,15 @@ description:
 options:
   user:
     description:
-      User as which to connect
+      - User as which to connect
     required: true
   password:
     description:
-      password for user to connect
+      - password for user to connect
     required: true
   to:
     description:
-      user ID or name of the room, when using room use a slash to indicate your nick.
+      - user ID or name of the room, when using room use a slash to indicate your nick.
     required: true
   msg:
     description:
@@ -28,43 +50,47 @@ options:
     default: null
   host:
     description:
-      host to connect, overrides user info
+      - host to connect, overrides user info
     required: false
   port:
     description:
-      port to connect to, overrides default
+      - port to connect to, overrides default
     required: false
     default: 5222
   encoding:
     description:
-      message encoding
+      - message encoding
     required: false
 
 # informational: requirements for nodes
-requirements: [ xmpp ]
-author: Brian Coca
+requirements:
+    - python xmpp (xmpppy)
+author: "Brian Coca (@bcoca)"
 '''
 
 EXAMPLES = '''
 # send a message to a user
-- jabber: user=mybot@example.net
-          password=secret
-          to=friend@example.net
-          msg="Ansible task finished"
+- jabber:
+    user: mybot@example.net
+    password: secret
+    to: friend@example.net
+    msg: Ansible task finished
 
 # send a message to a room
-- jabber: user=mybot@example.net
-          password=secret
-          to=mychaps@conference.example.net/ansiblebot
-          msg="Ansible task finished"
+- jabber:
+    user: mybot@example.net
+    password: secret
+    to: mychaps@conference.example.net/ansiblebot
+    msg: Ansible task finished
 
 # send a message, specifying the host and port
-- jabber user=mybot@example.net
-         host=talk.example.net
-         port=5223
-         password=secret
-         to=mychaps@example.net
-         msg="Ansible task finished"
+- jabber
+    user: mybot@example.net
+    host: talk.example.net
+    port: 5223
+    password: secret
+    to: mychaps@example.net
+    msg: Ansible task finished
 '''
 
 import os
@@ -82,7 +108,7 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(
             user=dict(required=True),
-            password=dict(required=True),
+            password=dict(required=True, no_log=True),
             to=dict(required=True),
             msg=dict(required=True),
             host=dict(required=False),
@@ -93,7 +119,7 @@ def main():
     )
 
     if not HAS_XMPP:
-        module.fail_json(msg="xmpp is not installed")
+        module.fail_json(msg="The required python xmpp library (xmpppy) is not installed")
 
     jid = xmpp.JID(module.params['user'])
     user = jid.getNode()
@@ -115,7 +141,7 @@ def main():
     msg = xmpp.protocol.Message(body=module.params['msg'])
 
     try:
-        conn=xmpp.Client(server)
+        conn=xmpp.Client(server, debug=[])
         if not conn.connect(server=(host,port)):
             module.fail_json(rc=1, msg='Failed to connect to server: %s' % (server))
         if not conn.auth(user,password,'Ansible'):
@@ -136,11 +162,15 @@ def main():
             conn.send(msg)
         time.sleep(1)
         conn.disconnect()
-    except Exception, e:
+    except Exception:
+        e = get_exception()
         module.fail_json(msg="unable to send msg: %s" % e)
 
     module.exit_json(changed=False, to=to, user=user, msg=msg.getBody())
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+from ansible.module_utils.pycompat24 import get_exception
+
+if __name__ == '__main__':
+    main()

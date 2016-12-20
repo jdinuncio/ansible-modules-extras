@@ -18,6 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+ANSIBLE_METADATA = {'status': ['preview'],
+                    'supported_by': 'community',
+                    'version': '1.0'}
+
 DOCUMENTATION = '''
 ---
 module: rabbitmq_parameter
@@ -25,7 +29,7 @@ short_description: Adds or removes parameters to RabbitMQ
 description:
   - Manage dynamic, cluster-wide parameters for RabbitMQ
 version_added: "1.1"
-author: Chris Hoffman
+author: '"Chris Hoffman (@chrishoffman)"'
 options:
   component:
     description:
@@ -63,10 +67,11 @@ options:
 
 EXAMPLES = """
 # Set the federation parameter 'local_username' to a value of 'guest' (in quotes)
-- rabbitmq_parameter: component=federation
-                      name=local-username
-                      value='"guest"'
-                      state=present
+- rabbitmq_parameter:
+    component: federation
+    name: local-username
+    value: '"guest"'
+    state: present
 """
 
 class RabbitMqParameter(object):
@@ -96,12 +101,17 @@ class RabbitMqParameter(object):
             component, name, value = param_item.split('\t')
 
             if component == self.component and name == self.name:
-                self._value = value
+                self._value = json.loads(value)
                 return True
         return False
 
     def set(self):
-        self._exec(['set_parameter', '-p', self.vhost, self.component, self.name, self.value])
+        self._exec(['set_parameter',
+                    '-p',
+                    self.vhost,
+                    self.component,
+                    self.name,
+                    json.dumps(self.value)])
 
     def delete(self):
         self._exec(['clear_parameter', '-p', self.vhost, self.component, self.name])
@@ -126,6 +136,8 @@ def main():
     component = module.params['component']
     name = module.params['name']
     value = module.params['value']
+    if isinstance(value, str):
+        value = json.loads(value)
     vhost = module.params['vhost']
     state = module.params['state']
     node = module.params['node']
@@ -149,4 +161,6 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
-main()
+
+if __name__ == '__main__':
+    main()
